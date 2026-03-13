@@ -1,0 +1,335 @@
+#!/usr/bin/env python3
+"""
+TOPSAIL-NG CI Orchestration Entrypoint
+
+This script provides the unified entrypoint for CI operations across all projects
+in the TOPSAIL-NG test harness. It follows the constitutional principle of
+CI-First Testing by providing consistent, reliable CI integration.
+
+Usage:
+    run                           # List available projects
+    run <project> <operation>     # Execute project operation
+    run projects                  # Explicit project listing
+
+Examples:
+    run llm_d prepare
+    run llm_d test
+    run skeleton validate
+"""
+
+import os
+import sys
+import subprocess
+from pathlib import Path
+from typing import List, Optional
+
+import click
+
+TOPSAIL_HOME = Path(__file__).parent.parent
+
+def find_project_directory(project_name: str) -> Optional[Path]:
+    """
+    Find the directory for the specified project.
+
+    Args:
+        project_name: Name of the project to find
+
+    Returns:
+        Path to project directory if found, None otherwise
+    """
+    # Look in the projects directory
+    projects_dir = TOPSAIL_HOME / "projects"
+    project_dir = projects_dir / project_name
+
+    if project_dir.exists() and project_dir.is_dir():
+        return project_dir
+
+    return None
+
+
+def find_ci_script(project_dir: Path, operation: str) -> Optional[Path]:
+    """
+    Find the appropriate CI script for the operation.
+
+    Args:
+        project_dir: Project directory path
+        operation: Operation to perform (e.g., 'ci')
+
+    Returns:
+        Path to CI script if found, None otherwise
+    """
+    # Check possible locations for CI scripts
+    possible_locations = [
+        # Operation-specific script in project root
+        project_dir / f"{operation}.py",
+        # Operation-specific script in orchestration subdirectory
+        project_dir / "orchestration" / f"{operation}.py",
+    ]
+
+    for script_path in possible_locations:
+        if script_path.exists():
+            return script_path
+
+    return None
+
+
+def get_available_projects() -> List[str]:
+    """Get list of available projects."""
+
+    projects_dir = TOPSAIL_HOME / "projects"
+
+    if not projects_dir.exists():
+        return []
+
+    projects = []
+    for proj_dir in projects_dir.iterdir():
+        if not proj_dir.is_dir():
+            continue
+        if proj_dir.name.startswith('.'):
+            continue
+
+        projects.append(proj_dir.name)
+
+    return sorted(projects)
+
+
+def list_projects():
+    """List all available projects."""
+    projects = get_available_projects()
+
+    if not projects:
+        click.echo("📂 No projects found")
+        return
+
+    click.echo("📂 Available projects:")
+    for project in projects:
+        project_dir = find_project_directory(project)
+        ci_script = find_ci_script(project_dir, "ci")
+        status = "✅" if ci_script else "⚠️"
+        click.echo(f"   {status} {project}")
+
+    click.echo()
+    click.echo("Usage:")
+    click.echo("   run <project> <operation>  # Execute project operation")
+    click.echo("   run projects               # List projects explicitly")
+    click.echo()
+    click.echo("Examples:")
+    click.echo(f"   run {projects[0]} prepare")
+    click.echo(f"   run {projects[0]} test")
+    if len(projects) > 1:
+        click.echo(f"   run {projects[1]} validate")
+
+
+
+def show_project_operations(project: str):
+    """Show available operations for a project by listing Python files."""
+    click.echo(f"🔧 Available operations for project '{project}':")
+
+    # Find project directory
+    project_dir = find_project_directory(project)
+    if not project_dir:
+        click.echo(
+            click.style(f"❌ ERROR: Project '{project}' not found.", fg='red'),
+            err=True
+        )
+        return
+
+    # List Python files in the project directory
+    python_files = []
+    for file_path in project_dir.glob("*.py"):
+        if file_path.is_file():
+            operation_name = file_path.stem  # filename without .py extension
+            python_files.append((operation_name, file_path))
+
+    if not python_files:
+        click.echo("⚠️  No Python files found in project directory")
+        click.echo(f"📁 Project directory: {project_dir}")
+        return
+
+    click.echo()
+    click.echo("📄 Available Python files:")
+
+    operation_files = []
+
+    for operation_name, file_path in sorted(python_files):
+        # Skip files that are not executable
+        if not os.access(file_path, os.X_OK):
+            continue
+        operation_files.append((operation_name, file_path))
+
+    for operation_name, file_path in operation_files:
+        click.echo(f"   📝 {operation_name}.py")
+
+    click.echo(f"Usage: run {project} <filename_without_py>")
+    click.echo()
+    click.echo("Examples:")
+    for operation_name, _ in python_files[:3]:
+        click.echo(f"   run {project} {operation_name}")
+
+
+def parse_cli_help(help_output: str) -> List[str]:
+    """Parse CLI help output to extract available commands."""
+    operations = []
+    in_commands_section = False
+
+    lines = help_output.split('\n')
+    for line in lines:
+        line = line.strip()
+
+        # Look for "Commands:" section
+        if line.lower().startswith('commands:'):
+            in_commands_section = True
+            continue
+
+        # Stop when we hit another section
+        if in_commands_section and line and not line.startswith(' '):
+            break
+
+        # Extract command names
+        if in_commands_section and line.startswith(' '):
+            # Format is typically: "  command_name  Description"
+            parts = line.split()
+            if parts:
+                command_name = parts[0].strip()
+                # Skip common help/utility commands
+                if command_name not in ['--help', '--version', '-h', '-v']:
+                    operations.append(command_name)
+
+    return operations
+
+
+def execute_project_operation(project: str, operation: str, args: tuple, verbose: bool, dry_run: bool):
+    """Execute a project operation."""
+    if verbose:
+        click.echo(f"🚀 TOPSAIL-NG CI Orchestration")
+        click.echo(f"Project: {project}")
+        click.echo(f"Operation: {operation}")
+        click.echo(f"Arguments: {list(args)}")
+
+    # Find project directory
+    project_dir = find_project_directory(project)
+    if not project_dir:
+        click.echo(
+            click.style(f"❌ ERROR: Project '{project}' not found.", fg='red'),
+            err=True
+        )
+
+        available_projects = get_available_projects()
+        if available_projects:
+            click.echo(f"\n📂 Available projects:")
+            for proj in available_projects:
+                click.echo(f"   • {proj}")
+        else:
+            click.echo(f"📂 No projects found in projects/ directory")
+
+        sys.exit(1)
+
+    # Find CI script
+    ci_script = find_ci_script(project_dir, operation)
+    if not ci_script:
+        click.echo(
+            click.style(
+                f"❌ ERROR: No CI script found for project '{project}' operation '{operation}'.",
+                fg='red'
+            ),
+            err=True
+        )
+        click.echo(f"🔍 Expected: {project_dir}/ci.py or {project_dir}/{operation}.py")
+        sys.exit(1)
+
+    # Prepare command
+    cmd = [sys.executable, str(ci_script)] + list(args)
+
+    if verbose or dry_run:
+        click.echo(f"\n🔧 Execution Details:")
+        click.echo(f"   Command: {' '.join(cmd)}")
+        click.echo(f"   Working Directory: {project_dir}")
+        click.echo(f"   Script: {ci_script}")
+
+    if dry_run:
+        click.echo(f"\n🧪 DRY RUN: Would execute the above command")
+        click.echo(f"✨ Use --verbose to see execution details without --dry-run")
+        return
+
+    # Execute the command
+    click.echo(f"▶️  Executing {project} {operation} {' '.join(args)}")
+
+    try:
+        result = subprocess.run(
+            cmd,
+            cwd=project_dir,
+            check=False  # Don't raise exception on non-zero exit
+        )
+
+        if result.returncode == 0:
+            click.echo(
+                click.style(f"✅ {project} {operation} completed successfully", fg='green')
+            )
+        else:
+            click.echo(
+                click.style(
+                    f"❌ {project} {operation} failed with exit code {result.returncode}",
+                    fg='red'
+                ),
+                err=True
+            )
+
+        sys.exit(result.returncode)
+
+    except FileNotFoundError as e:
+        click.echo(
+            click.style(f"❌ ERROR: Failed to execute CI script: {e}", fg='red'),
+            err=True
+        )
+        sys.exit(1)
+    except Exception as e:
+        click.echo(
+            click.style(f"❌ ERROR: Unexpected error during execution: {e}", fg='red'),
+            err=True
+        )
+        sys.exit(1)
+
+
+@click.command()
+@click.argument('project', required=False)
+@click.argument('operation', required=False)
+@click.argument('args', nargs=-1)
+@click.option('--verbose', '-v', is_flag=True, help='Enable verbose output')
+@click.option('--dry-run', is_flag=True, help='Show what would be executed without running it')
+def main(project, operation, args, verbose, dry_run):
+    """
+    TOPSAIL-NG CI Orchestration Entrypoint.
+
+    \b
+    Usage:
+        run                           # List available projects
+        run <project> <operation>     # Execute project operation
+        run projects                  # Explicit project listing
+
+    \b
+    Examples:
+        run llm-d prepare
+        run llm-d test
+        run skeleton validate
+    """
+    # No arguments - list projects
+    if not project:
+        list_projects()
+        return
+
+    # Special case: explicit "projects" command
+    if project == "projects":
+        list_projects()
+        return
+
+    # Need operation for project execution - show available operations
+    if not operation:
+        show_project_operations(project)
+        sys.exit(1)
+
+    # Execute project operation
+    execute_project_operation(project, operation, args, verbose, dry_run)
+
+
+if __name__ == "__main__":
+    main()

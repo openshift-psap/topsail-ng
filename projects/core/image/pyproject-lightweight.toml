@@ -7,12 +7,9 @@ requires-python = ">=3.11"
 dependencies = [
     "yq",
     "pyyaml",
-    "fire",
+    "click>=8.1.0",
     "ansible",
     "jinja2>=3.1.0,<3.2.0",
-    "joblib",
-    "jsonpath_ng",
-    "pyjwt",
     "slack_sdk==3.35.0",
 ]
 

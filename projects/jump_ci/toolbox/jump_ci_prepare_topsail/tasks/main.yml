@@ -1,0 +1,190 @@
+---
+- name: Ensure that the lock is owned
+  include_role:
+    name: jump_ci_ensure_lock
+  vars:
+    jump_ci_ensure_lock_cluster: "{{ jump_ci_prepare_topsail_cluster }}"
+    jump_ci_ensure_lock_owner: "{{ jump_ci_prepare_topsail_lock_owner }}"
+
+- name: Generate the artifact dirname
+  set_fact:
+    artifact_dir: "{{ cluster_lock_dir }}/jump_ci_artifacts"
+
+- name: Ensure that the logs directory exists
+  ansible.builtin.file:
+    state: directory
+    path: "{{ artifact_dir }}"
+    mode: '0755'
+
+- name: Compute the index of the next logs directory
+  shell:
+    set -o pipefail;
+    printf "%03d" $(ls "{{ artifact_dir }}/0*" -d 2>/dev/null | wc -l)
+  register: next_artifact_dir_count
+
+- name: Set the logs directory name
+  set_fact:
+    artifact_extra_logs_dir: "{{ artifact_dir }}/{{ next_artifact_dir_count.stdout }}__jump_ci__prepare_topsail"
+
+- name: Ensure that the top artifacts directory exists
+  ansible.builtin.file:
+    state: directory
+    path: "{{ artifact_extra_logs_dir }}"
+    mode: '0755'
+
+- name: Ensure that the artifacts directory exists
+  ansible.builtin.file:
+    state: directory
+    path: "{{ artifact_extra_logs_dir }}/artifacts"
+    mode: '0755'
+
+- name: Ensure that the src directory exists
+  ansible.builtin.file:
+    state: directory
+    path: "{{ artifact_extra_logs_dir }}/src"
+    mode: '0755'
+
+- name: Show the artifacts dir
+  debug: msg="Using '{{ artifact_extra_logs_dir }}' as artifacts directory"
+
+- name: Set TOPSAIL's directory
+  set_fact:
+    topsail_home: "{{ cluster_lock_dir }}/topsail"
+
+- name: Set git command
+  set_fact:
+    git: git -C "{{ topsail_home }}"
+    git_src: "{% if jump_ci_prepare_topsail_pr_number %}pr-{{ jump_ci_prepare_topsail_pr_number }}{% else %}main{% endif %}"
+
+- name: Git checkout
+  ansible.builtin.git:
+    repo: 'https://github.com/{{ jump_ci_prepare_topsail_repo_owner }}/{{ jump_ci_prepare_topsail_repo_name }}.git'
+    dest: "{{ topsail_home }}"
+    # always clone the main branch at this stage. The exact commit will be fetched next.
+    version: "main"
+    force: true
+
+- name: Save git ref
+  set_fact:
+    git_ref: "\
+      {% if jump_ci_prepare_topsail_git_ref -%}
+         {{ jump_ci_prepare_topsail_git_ref }}
+      {%- elif jump_ci_prepare_topsail_pr_number -%}
+        refs/pull/{{ jump_ci_prepare_topsail_pr_number }}/merge
+      {%- else -%}
+        main
+      {%- endif -%}" # noqa: jinja[spacing]
+
+- name: Fetch TOPSAIL repository
+  block:
+  - name: Fetch TOPSAIL's branch
+    command: |
+      {{ git }} fetch --quiet origin {{ git_ref }}
+
+    when: jump_ci_prepare_topsail_pr_number
+
+  - name: Switch to TOPSAIL's branch
+    command: |
+      {{ git }} reset --hard FETCH_HEAD
+
+    when: jump_ci_prepare_topsail_pr_number
+
+  - name: Fetch the submodules
+    command: |
+      {{ git }} submodule --quiet update --init --recursive --force
+
+  - name: Show the submodules version
+    command: |
+      {{ git }} submodule
+
+- name: Get the relevant git commit
+  shell: |
+    {{ git }} rev-parse HEAD
+  register: git_commit_cmd
+
+- name: Show the commit
+  shell: |
+    set -o pipefail;
+    {{ git }} show --quiet {{ git_commit_cmd.stdout }} | tee "{{ artifact_extra_logs_dir }}/src/topsail.git-version"
+
+- name: Generate the image tag
+  set_fact:
+    image_tag: "{% if jump_ci_prepare_topsail_image_tag %}{{ jump_ci_prepare_topsail_image_tag }}{% else %}{{ git_src }}-{{ git_commit_cmd.stdout[:9] }}{% endif %}"
+
+- name: Generate the image full name
+  set_fact:
+    image_full_name: "{{ jump_ci_prepare_topsail_image_name }}:{{ image_tag }}"
+
+- name: Check if the image tag already exists
+  shell:
+    podman inspect {{ image_full_name }} > /dev/null
+      && echo "Image '{{ image_full_name }}' already exists. No need to rebuild it."
+  register: has_image
+  failed_when: false
+
+- name: List all the old images to delete
+  # setting --filter label=preserve!=true in Podman args doesn't work
+  shell:
+    set -o pipefail;
+    podman image ls
+       --filter until=4h
+       --filter label=name=topsail
+       --format json
+       | jq -r '.[] | select(.Containers == 0) | select(.Labels.preserve != "true") | .Id'
+  register: podman_images_to_delete_cmd
+
+# To add the 'preserve=true' label:
+#
+# CONTAINER_NAME=localhost/topsail:main
+# LABEL="preserve=true"
+# echo "FROM $CONTAINER_NAME" | podman build --label "$LABEL" -t "$CONTAINER_NAME" -
+
+- name: Prune old images
+  command:
+    podman image rm "{{ image_id }}"
+  when:
+  - jump_ci_prepare_topsail_cleanup_old_pr_images
+  - has_image.rc != 0
+  loop: "{{ podman_images_to_delete_cmd.stdout_lines }}"
+  loop_control:
+      loop_var: image_id
+  # I have seen some unpected failure because of (dependency) images used by a container (not sure which one :/)
+  # so ignoring this failure for the time being.
+  failed_when: false
+
+- name: "Build image as an update {{ image_full_name }}"
+  shell: |
+    cat > {{ cluster_lock_dir }}/overlay.containerfile <<EOF
+    FROM hell
+    ENTRYPOINT []
+    CMD []
+
+    RUN git fetch --quiet origin "{{ git_commit_cmd.stdout }}"
+    RUN git reset --hard FETCH_HEAD
+    RUN git submodule --quiet update --init --recursive --force
+    RUN git submodule
+    EOF
+
+    time podman build \
+      --label preserve=false \
+      --tag "{{ image_full_name }}" \
+      --file {{ cluster_lock_dir }}/overlay.containerfile \
+      --from "{{ jump_ci_prepare_topsail_image_name }}:{{ jump_ci_prepare_topsail_update_from_imagetag }}"
+  when:
+  - has_image.rc != 0
+  - jump_ci_prepare_topsail_update_from_imagetag | default('', true) | length >= 0
+
+- name: "Build image from scatch {{ image_full_name }}"
+  shell:
+    time podman build --squash
+      --label jump-ci=true
+      --tag "{{ image_full_name }}"
+      --file "{{ jump_ci_prepare_topsail_dockerfile_name }}"
+      "{{ topsail_home }}" > "{{ artifact_extra_logs_dir }}/artifacts/image.log"
+  when:
+  - has_image.rc != 0
+  - jump_ci_prepare_topsail_update_from_imagetag | default('', true) | length == 0
+
+- name: Save the name of the image to use
+  shell:
+    echo "{{ image_full_name }}" > "{{ cluster_lock_dir }}/pod.image"

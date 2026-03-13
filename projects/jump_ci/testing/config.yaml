@@ -1,0 +1,102 @@
+ci_presets:
+  # list of names of presets that have been applied
+  names: null
+
+  mac_ai:
+    secrets.dir.name: crc-mac-ai-secret # key/value never actually used
+    secrets.dir.env_key: CRC_MAC_AI_SECRET_PATH
+    cluster.name: mac
+    project.name: mac_ai
+
+  mac_ai_mac5:
+    extends: [mac_ai]
+    cluster.name: mac5
+
+  mac_ai_nightly:
+    extends: [mac_ai_mac5]
+    project.args: [cpt_nightly]
+
+  mac_ai_nightly_lightspeed:
+    extends: [mac_ai_mac5]
+    project.args: [cpt_nightly_lightspeed]
+
+  cont_bench:
+    secrets.dir.name: cont-bench-secret # key/value never actually used
+    secrets.dir.env_key: CONTAINER_BENCH_SECRET_PATH
+    cluster.name: mac.jrodak
+    project.name: container_bench
+
+  llama_cpp_presubmit:
+    secrets.dir.name: crc-mac-ai-secret # key/value never actually used
+    secrets.dir.env_key: CRC_MAC_AI_SECRET_PATH
+    cluster.name: mac5
+    project.name: mac_ai
+
+  plot_cluster:
+    cluster.name: plot
+
+secrets:
+  dir:
+    name: psap-ods-secret
+    env_key: PSAP_ODS_SECRET_PATH
+  private_key_filename: jumpci_privatekey
+  bastion_host_filename: jumpci_bastion_host
+  bastion_host_user_filename: jumpci_bastion_host_user
+  jump_host_filename: jumpci_jump_host
+
+prepare:
+  job_name_to_preset:
+    pull-ci-openshift-psap-topsail-main-cont_bench-jump-ci: cont_bench
+    pull-ci-openshift-psap-topsail-main-mac_ai-jump-ci: mac_ai
+    pull-ci-openshift-psap-topsail-main-mac_ai-jump-ci-mac5: mac_ai_mac5
+    periodic-ci-openshift-psap-topsail-main-mac_ai-jump-ci-cpt: mac_ai_nightly
+    periodic-ci-openshift-psap-topsail-main-mac_ai-jump-ci-cpt-lightspeed: mac_ai_nightly_lightspeed
+    pull-ci-openshift-psap-topsail-main-jump-ci-plot: plot_cluster
+    pull-ci-crc-org-llama.cpp-main-topsail: llama_cpp_presubmit
+ssh_tunnel:
+  # creates a tunnel to the bastion via the jump host, if enabled
+  enabled: false
+  local_host_port: 2500
+  verbose: false # will leak host names if enabled
+cluster:
+  name: null
+project:
+  name: null
+  args: null
+
+foreign_testing: # used only when testing from another repo that TOPSAIL itself
+  topsail:
+    repo:
+      owner: openshift-psap
+      name: topsail
+      branch: main
+ssh:
+  flags:
+  - -o StrictHostKeyChecking=no
+  - -o UserKnownHostsFile=/dev/null
+  - -o LogLevel=ERROR
+  - -o ServerAliveInterval=60
+  - -o ServerAliveCountMax=3
+env:
+  pass_lists:
+    OPENSHIFT_CI_job: [JOB_TYPE, ENTRYPOINT_OPTIONS, JOB_NAME, JOB_SPEC, OPENSHIFT_CI, JOB_NAME_SAFE, BUILD_ID]
+    OPENSHIFT_CI_git_pr: [PULL_PULL_SHA, PULL_NUMBER, PULL_BASE_REF, REPO_NAME, REPO_OWNER, PULL_BASE_SHA, JOB_NAME, PULL_TITLE, PULL_REFS, PULL_HEAD_REF]
+    OPENSHIFT_CI_topsail: [TOPSAIL_OPENSHIFT_CI_STEP_DIR, OPENSHIFT_CI_TOPSAIL_FOREIGN_TESTING]
+
+rewrite_variables_overrides:
+  cluster_found_in_pr_args: false
+
+exec_list:
+  _only_: false
+  # keep these steps enabled for the jump-ci to work
+  lock_cluster: true
+  prepare_jump_ci: true
+  unlock_cluster: true
+
+  pre_cleanup_ci: null
+  prepare_ci: null
+  test_ci: null
+  post_cleanup_ci: null
+multi_run:
+  args: []
+  stop_on_error: false

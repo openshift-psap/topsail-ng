@@ -172,7 +172,7 @@
       --from "{{ jump_ci_prepare_topsail_image_name }}:{{ jump_ci_prepare_topsail_update_from_imagetag }}"
   when:
   - has_image.rc != 0
-  - jump_ci_prepare_topsail_update_from_imagetag | default('', true) | length >= 0
+  - jump_ci_prepare_topsail_update_from_imagetag | default('', true) | length > 0
 
 - name: "Build image from scatch {{ image_full_name }}"
   shell:

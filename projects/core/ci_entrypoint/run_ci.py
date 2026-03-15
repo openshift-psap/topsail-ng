@@ -23,7 +23,67 @@ import subprocess
 from pathlib import Path
 from typing import List, Optional
 
-import click
+# Install click package using uv (as non-root user)
+try:
+    import click
+except ImportError:
+    print("📦 Installing click package...")
+
+    # Try uv first with no-cache to avoid permission issues
+    install_success = False
+    try:
+        subprocess.run(
+            ["uv", "pip", "install", "--no-cache", "click"],
+            check=True,
+            capture_output=True
+        )
+        print("✅ Click package installed successfully with uv")
+        install_success = True
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        # Fallback to pip with user installation
+        try:
+            subprocess.run(
+                [sys.executable, "-m", "pip", "install", "--user", "--no-cache-dir", "click"],
+                check=True,
+                capture_output=True
+            )
+            print("✅ Click package installed successfully with pip")
+            install_success = True
+        except subprocess.CalledProcessError as pip_error:
+            print(f"❌ Failed to install click: {pip_error}")
+            sys.exit(1)
+
+    if install_success:
+        # Ensure user site-packages is in path
+        import site
+        user_site = site.getusersitepackages()
+        if user_site not in sys.path:
+            sys.path.insert(0, user_site)
+
+        # Also check for common install locations
+        import os
+        possible_paths = [
+            os.path.expanduser("~/.local/lib/python3.11/site-packages"),
+            os.path.expanduser("~/.local/lib/python3.12/site-packages"),
+            os.path.expanduser("~/.local/lib/python3.13/site-packages"),
+            user_site
+        ]
+
+        for path in possible_paths:
+            if os.path.exists(path) and path not in sys.path:
+                sys.path.insert(0, path)
+
+        # Clear import cache and try again
+        import importlib
+        importlib.invalidate_caches()
+
+        try:
+            import click
+        except ImportError:
+            print("❌ Click installation failed - module not found after installation")
+            print(f"🔍 Python path: {sys.path}")
+            print(f"🔍 User site: {user_site}")
+            sys.exit(1)
 
 TOPSAIL_HOME = Path(__file__).parent.parent
 

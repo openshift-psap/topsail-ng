@@ -1,0 +1,82 @@
+# Cluster configurations for benchmark pipeline
+# This is the single source of truth for cluster settings.
+#
+# Required fields:
+#   - kubeconfig_secret: Secret name in KFP namespace containing kubeconfig
+#   - namespace: Target namespace for benchmark deployments
+#   - gpu_type: GPU type for node selection (H200, A100, MI300X)
+#   - accelerator: GPU vendor ("nvidia" or "amd") for vLLM image selection
+#
+# Optional fields:
+#   - api_url: Cluster API endpoint
+#   - kueue_queue: Kueue queue name (default: benchmark-queue)
+#   - capacity: GPU capacity hints
+#   - enabled: Whether cluster is available for benchmarks
+#
+# Note: kubeconfig is stored in K8s secret, not local files.
+# Use 'cluster_manager.py onboard <id> --kubeconfig <path>' to create secret.
+
+clusters:
+  rhaiis-h200:
+    name: "RHAIIS H200 Production Cluster"
+    description: "NVIDIA H200 cluster for production benchmarks"
+
+    # Kubeconfig secret in KFP namespace (source of truth)
+    kubeconfig_secret: "h200-kubeconfig"
+
+    # Target settings
+    namespace: "llm-d-bench"
+    gpu_type: "H200"
+    accelerator: "nvidia"  # For vLLM image selection
+
+    # Kueue
+    kueue_queue: "benchmark-queue"
+    kueue_flavor: "h200-flavor"
+
+    # Optional: cluster API endpoint
+    # api_url: "https://api.h200-cluster.example.com:6443"
+
+    # Capacity hints
+    capacity:
+      gpus: 16
+      max_tensor_parallel: 8
+
+    enabled: true
+
+  a100-cluster:
+    name: "A100 Staging Cluster"
+    description: "NVIDIA A100 cluster for staging and development"
+
+    kubeconfig_secret: "a100-kubeconfig"
+
+    namespace: "llm-d-bench"
+    gpu_type: "A100"
+    accelerator: "nvidia"
+
+    kueue_queue: "benchmark-queue"
+    kueue_flavor: "a100-flavor"
+
+    capacity:
+      gpus: 8
+      max_tensor_parallel: 4
+
+    enabled: true
+
+  mi300x-cluster:
+    name: "MI300X AMD Cluster"
+    description: "AMD MI300X cluster for AMD GPU benchmarks"
+
+    kubeconfig_secret: "mi300x-kubeconfig"
+
+    namespace: "llm-d-bench"
+    gpu_type: "MI300X"
+    accelerator: "amd"  # AMD GPU - uses ROCm vLLM image
+
+    kueue_queue: "benchmark-queue"
+    kueue_flavor: "mi300x-flavor"
+
+    capacity:
+      gpus: 8
+      max_tensor_parallel: 8
+
+    enabled: true

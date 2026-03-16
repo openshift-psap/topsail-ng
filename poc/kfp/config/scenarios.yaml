@@ -1,0 +1,122 @@
+# Benchmark Scenarios Configuration
+# Model keys = HuggingFace IDs (used directly for download)
+# Matrix expansion: model × workload × routing × runtime_args variations
+
+# Target cluster/SUT (can be overridden via CLI: --cluster mi300x-cluster)
+target_cluster: rhaiis-h200
+
+# Common defaults (inherited by all models unless overridden)
+common:
+  deploy:
+    namespace: llm-perf
+    replicas: 1
+  runtime_args:
+    max-model-len: 8192
+    gpu-memory-utilization: 0.92
+    disable-log-requests: true
+    trust-remote-code: true
+
+# Workload profiles (data patterns for benchmarking)
+# max-model-len must be >= input_tokens + output_tokens + buffer
+workloads:
+  balanced:
+    description: "Balanced input/output lengths"
+    input_tokens: 1000
+    output_tokens: 1000
+    max-model-len: 8192
+
+  short:
+    description: "Short input, short output"
+    input_tokens: 128
+    output_tokens: 128
+    max-model-len: 8192
+
+  long-context:
+    description: "Long input, medium output"
+    input_tokens: 8192
+    output_tokens: 1024
+    max-model-len: 10000
+
+# Routing configurations
+routing:
+  direct:
+    description: "Direct vLLM access, no EPP"
+    epp_enabled: false
+
+  # Future routing modes
+  # prefix-estimation:
+  #   epp_enabled: true
+  #   epp_scorer: "kv-cache-utilization-scorer"
+
+# Model definitions with matrix sweep
+# Note: num_gpus is computed from tensor-parallel-size (they must be equal for vLLM)
+models:
+  # Qwen 235B FP8
+  Qwen/Qwen3-235B-A22B-Instruct-2507-FP8:
+    deploy:
+      name: qwen3-235b-fp8
+    runtime_args:
+      enable-expert-parallel: true
+      kv-cache-dtype: "fp8"
+    matrix:
+      workloads: [balanced, short]
+      routing: [direct]
+      tensor-parallel-size: [1]
+
+  Qwen/Qwen3-0.6B:
+    deploy:
+      name: qwen3-0-6B
+    matrix:
+      workloads: [balanced, short]
+      routing: [direct]
+      tensor-parallel-size: [1]
+
+  # GPT-OSS 120B
+  openai/gpt-oss-120b:
+    deploy:
+      name: gpt-oss-120b
+    matrix:
+      workloads: [balanced, short]
+      routing: [direct]
+      tensor-parallel-size: [1]
+
+  # GPT-OSS 120B FP8
+  RedHatAI/gpt-oss-120b-FP8-dynamic:
+    deploy:
+      name: gpt-oss-120b-fp8
+    matrix:
+      workloads: [balanced, short]
+      routing: [direct]
+      tensor-parallel-size: [1, 2, 4]
+
+  # GPT-OSS 20B (smaller, fewer TP options)
+  openai/gpt-oss-20b:
+    deploy:
+      name: gpt-oss-20b
+    matrix:
+      workloads: [balanced, short]
+      routing: [direct]
+      tensor-parallel-size: [1]
+
+  # RedHat Qwen FP8 Dynamic
+  RedHatAI/Qwen3-235B-A22B-FP8-dynamic:
+    deploy:
+      name: qwen3-235b-fp8-dynamic
+    runtime_args:
+      enable-expert-parallel: true
+    matrix:
+      workloads: [balanced, short]
+      routing: [direct]
+      tensor-parallel-size: [2, 4]
+
+
+# Example: What the matrix expands to for openai/gpt-oss-120b:
+#
+# Run 1: model=openai/gpt-oss-120b, workload=balanced, routing=direct, tp=1
+# Run 2: model=openai/gpt-oss-120b, workload=balanced, routing=direct, tp=2
+# Run 3: model=openai/gpt-oss-120b, workload=balanced, routing=direct, tp=4
+# Run 4: model=openai/gpt-oss-120b, workload=short,    routing=direct, tp=1
+# Run 5: model=openai/gpt-oss-120b, workload=short,    routing=direct, tp=2
+# Run 6: model=openai/gpt-oss-120b, workload=short,    routing=direct, tp=4
+#
+# Total: 2 workloads × 1 routing × 3 tp = 6 runs per model

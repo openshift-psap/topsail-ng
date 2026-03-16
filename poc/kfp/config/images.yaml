@@ -1,0 +1,20 @@
+# vLLM Container Images Configuration
+# Maps accelerator type and vendor to container images
+#
+# Usage:
+#   - Auto-selected based on cluster.accelerator and image_vendor
+#   - Can be overridden at scenario or model level with vllm_image field
+#
+# Accelerator-specific env_vars are handled by RHAIISDeploymentStrategy
+
+vllm:
+  nvidia:
+    redhat: "quay.io/aipcc/rhaiis/cuda-ubi9:3.4.0-ea.1-1772560918"
+    upstream: "vllm/vllm-openai:v0.14.1"
+
+  amd:
+    redhat: "quay.io/aipcc/rhaiis/rocm-ubi9:3.3.0-1769597087"
+    upstream: "quay.io/vllm/vllm-rocm:0.13.0"
+
+# Default vendor preference when not specified
+default_vendor: redhat

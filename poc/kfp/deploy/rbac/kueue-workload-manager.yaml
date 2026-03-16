@@ -1,0 +1,30 @@
+# RBAC for KFP pipeline-runner to manage Kueue workloads
+#
+# Required on each management cluster where KFP runs.
+# This allows the pipeline to automatically cleanup Kueue workloads
+# after benchmark completion.
+#
+# Apply with:
+#   oc apply -f deploy/rbac/kueue-workload-manager.yaml
+#
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kueue-workload-manager
+rules:
+- apiGroups: ["kueue.x-k8s.io"]
+  resources: ["workloads"]
+  verbs: ["get", "list", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: pipeline-runner-kueue-workload-manager
+subjects:
+- kind: ServiceAccount
+  name: pipeline-runner
+  namespace: kubeflow
+roleRef:
+  kind: ClusterRole
+  name: kueue-workload-manager
+  apiGroup: rbac.authorization.k8s.io

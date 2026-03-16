@@ -1,0 +1,121 @@
+# RHAIIS Benchmark Scenarios Configuration
+# Uses KServe ServingRuntime + InferenceService for deployment
+# No EPP routing support (always direct)
+
+target_cluster: rhaiis-h200
+
+# RHAIIS-specific defaults
+common:
+  model_pvc: "models-storage"
+  cache_dir: "/models"
+  deploy:
+    replicas: 1
+  runtime_args:
+    max-model-len: 8192
+    gpu-memory-utilization: 0.92
+    disable-log-requests: true
+    trust-remote-code: true
+
+# Global env_vars (optional, applies to all models)
+# Uncomment to override accelerator defaults for ALL models
+# env_vars:
+#   VLLM_ROCM_USE_AITER: "0"
+
+# Workload profiles (same as RHOAI)
+workloads:
+  balanced:
+    description: "Balanced input/output lengths"
+    input_tokens: 1000
+    output_tokens: 1000
+    max-model-len: 8192
+
+  short:
+    description: "Short input, short output"
+    input_tokens: 128
+    output_tokens: 128
+    max-model-len: 8192
+
+  long-context:
+    description: "Long input, medium output"
+    input_tokens: 8192
+    output_tokens: 1024
+    max-model-len: 10000
+
+# Model definitions
+# Note: num_gpus is computed from tensor-parallel-size (they must be equal for vLLM)
+models:
+  # Small model for testing
+  Qwen/Qwen3-0.6B:
+    deploy:
+      name: qwen3-0-6b
+    matrix:
+      workloads: [balanced, short]
+      tensor-parallel-size: [1]
+
+  # Large MoE model with AMD-specific env_vars
+  Qwen/Qwen3-235B-A22B-Instruct-2507:
+    deploy:
+      name: qwen3-235b-instruct
+    # Model-specific env_vars (merged with accelerator defaults)
+    env_vars:
+      VLLM_ROCM_USE_AITER: "0"
+    matrix:
+      workloads: [balanced]
+      tensor-parallel-size: [4]
+
+  # FP8 variant
+  Qwen/Qwen3-235B-A22B-Instruct-2507-FP8:
+    deploy:
+      name: qwen3-235b-fp8
+    runtime_args:
+      enable-expert-parallel: true
+      kv-cache-dtype: "fp8"
+    matrix:
+      workloads: [balanced]
+      tensor-parallel-size: [4]
+
+  # Model with long context support
+  Qwen/Qwen3-Next-80B-A3B-Instruct:
+    deploy:
+      name: qwen3-n-80b-a3b-instruct
+    env_vars:
+      VLLM_ALLOW_LONG_MAX_MODEL_LEN: "1"
+    matrix:
+      workloads: [balanced, long-context]
+      tensor-parallel-size: [4]
+
+  # GPT-OSS models
+  openai/gpt-oss-120b:
+    deploy:
+      name: gpt-oss-120b
+    matrix:
+      workloads: [balanced, short]
+      tensor-parallel-size: [1, 2, 4]
+
+  # DeepSeek with different env_vars for AMD
+  deepseek-ai/DeepSeek-R1-0528:
+    deploy:
+      name: deepseek-r1
+    env_vars:
+      VLLM_ROCM_USE_AITER: "1"  # Enable for this model
+    matrix:
+      workloads: [balanced]
+      tensor-parallel-size: [8]
+
+
+# Example: What env_vars look like on AMD vs NVIDIA:
+#
+# On AMD cluster (mi300x-cluster):
+#   Qwen3-0.6B gets:
+#     VLLM_USE_V1: "1"                    (accelerator default)
+#
+#   Qwen3-235B-A22B-Instruct-2507 gets:
+#     VLLM_USE_V1: "1"                    (accelerator default)
+#     VLLM_ROCM_USE_AITER: "0"            (model override)
+#
+#   DeepSeek-R1-0528 gets:
+#     VLLM_USE_V1: "1"                    (accelerator default)
+#     VLLM_ROCM_USE_AITER: "1"            (model override)
+#
+# On NVIDIA cluster (rhaiis-h200):
+#   All models get no accelerator env_vars (only model-specific if defined)

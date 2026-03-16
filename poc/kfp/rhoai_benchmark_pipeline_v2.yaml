@@ -1,0 +1,1334 @@
+# PIPELINE DEFINITION
+# Name: rhoai-benchmark-v2
+# Description: RHOAI Benchmark with LLMInferenceService, secret mounting, and log streaming
+# Inputs:
+#    accelerator: str [Default: 'H200']
+#    guidellm_data: str [Default: 'prompt_tokens=1000,output_tokens=1000']
+#    guidellm_image: str [Default: 'image-registry.openshift-image-registry.svc:5000/llm-d-bench/guidellm-custom:v0.5.3']
+#    guidellm_max_seconds: str [Default: '120']
+#    guidellm_rate: str [Default: '1,10']
+#    kubeconfig_secret: str [Default: 'h200-kubeconfig']
+#    kueue_queue_name: str [Default: 'benchmark-queue']
+#    mlflow_enabled: str [Default: 'false']
+#    model_name: str [Default: 'Qwen/Qwen3-0.6B']
+#    namespace: str [Default: 'llm-d-bench']
+#    routing_mode: str [Default: 'direct']
+#    run_uuid: str [Default: '']
+#    skip_cleanup: bool [Default: False]
+#    tp: int [Default: 4.0]
+#    version: str [Default: 'RHOAI-3.2']
+#    vllm_args: str [Default: '--max-model-len=8192,--gpu-memory-utilization=0.95']
+components:
+  comp-cleanup:
+    dag:
+      tasks:
+        cleanup-kueue-workload:
+          cachingOptions: {}
+          componentRef:
+            name: comp-cleanup-kueue-workload
+          inputs:
+            parameters:
+              namespace:
+                runtimeValue:
+                  constant: benchmark-system
+              workload_name:
+                componentInputParameter: workload_name
+          taskInfo:
+            name: cleanup-kueue-workload
+        condition-1:
+          componentRef:
+            name: comp-condition-1-2
+          inputs:
+            parameters:
+              pipelinechannel--deployment_name:
+                componentInputParameter: deployment_name
+              pipelinechannel--namespace:
+                componentInputParameter: namespace
+              pipelinechannel--skip_cleanup:
+                componentInputParameter: skip_cleanup
+          taskInfo:
+            name: cleanup-deployment
+          triggerPolicy:
+            condition: inputs.parameter_values['pipelinechannel--skip_cleanup'] ==
+              false
+    inputDefinitions:
+      parameters:
+        deployment_name:
+          parameterType: STRING
+        namespace:
+          parameterType: STRING
+        skip_cleanup:
+          parameterType: BOOLEAN
+        workload_name:
+          parameterType: STRING
+  comp-cleanup-kueue-workload:
+    executorLabel: exec-cleanup-kueue-workload
+    inputDefinitions:
+      parameters:
+        namespace:
+          defaultValue: benchmark-system
+          isOptional: true
+          parameterType: STRING
+        workload_name:
+          parameterType: STRING
+  comp-cleanup-rhoai-deployment:
+    executorLabel: exec-cleanup-rhoai-deployment
+    inputDefinitions:
+      parameters:
+        deployment_name:
+          parameterType: STRING
+        namespace:
+          parameterType: STRING
+  comp-condition-1:
+    dag:
+      tasks:
+        upload-to-mlflow:
+          cachingOptions:
+            enableCache: true
+          componentRef:
+            name: comp-upload-to-mlflow
+          inputs:
+            artifacts:
+              benchmark_logs:
+                componentInputArtifact: pipelinechannel--run-guidellm-benchmark-benchmark_logs
+              benchmark_results:
+                componentInputArtifact: pipelinechannel--run-guidellm-benchmark-benchmark_results
+              llmis_yaml:
+                componentInputArtifact: pipelinechannel--deploy-rhoai-model-llmis_yaml
+            parameters:
+              accelerator:
+                componentInputParameter: pipelinechannel--accelerator
+              guidellm_data:
+                componentInputParameter: pipelinechannel--guidellm_data
+              guidellm_rate:
+                componentInputParameter: pipelinechannel--guidellm_rate
+              model_name:
+                componentInputParameter: pipelinechannel--model_name
+              run_uuid:
+                componentInputParameter: pipelinechannel--run_uuid
+              tp:
+                componentInputParameter: pipelinechannel--tp
+              version:
+                componentInputParameter: pipelinechannel--version
+          taskInfo:
+            name: upload-to-mlflow
+    inputDefinitions:
+      artifacts:
+        pipelinechannel--deploy-rhoai-model-llmis_yaml:
+          artifactType:
+            schemaTitle: system.Artifact
+            schemaVersion: 0.0.1
+        pipelinechannel--run-guidellm-benchmark-benchmark_logs:
+          artifactType:
+            schemaTitle: system.Artifact
+            schemaVersion: 0.0.1
+        pipelinechannel--run-guidellm-benchmark-benchmark_results:
+          artifactType:
+            schemaTitle: system.Artifact
+            schemaVersion: 0.0.1
+      parameters:
+        pipelinechannel--accelerator:
+          parameterType: STRING
+        pipelinechannel--guidellm_data:
+          parameterType: STRING
+        pipelinechannel--guidellm_rate:
+          parameterType: STRING
+        pipelinechannel--mlflow_enabled:
+          parameterType: STRING
+        pipelinechannel--model_name:
+          parameterType: STRING
+        pipelinechannel--run_uuid:
+          parameterType: STRING
+        pipelinechannel--tp:
+          parameterType: NUMBER_INTEGER
+        pipelinechannel--version:
+          parameterType: STRING
+  comp-condition-1-2:
+    dag:
+      tasks:
+        cleanup-rhoai-deployment:
+          cachingOptions: {}
+          componentRef:
+            name: comp-cleanup-rhoai-deployment
+          inputs:
+            parameters:
+              deployment_name:
+                componentInputParameter: pipelinechannel--deployment_name
+              namespace:
+                componentInputParameter: pipelinechannel--namespace
+          taskInfo:
+            name: cleanup-rhoai-deployment
+    inputDefinitions:
+      parameters:
+        pipelinechannel--deployment_name:
+          parameterType: STRING
+        pipelinechannel--namespace:
+          parameterType: STRING
+        pipelinechannel--skip_cleanup:
+          parameterType: BOOLEAN
+  comp-deploy-rhoai-model:
+    executorLabel: exec-deploy-rhoai-model
+    inputDefinitions:
+      parameters:
+        enable_auth:
+          defaultValue: 'false'
+          isOptional: true
+          parameterType: STRING
+        gateway_name:
+          defaultValue: openshift-ai-inference
+          isOptional: true
+          parameterType: STRING
+        gateway_namespace:
+          defaultValue: openshift-ingress
+          isOptional: true
+          parameterType: STRING
+        kueue_queue_name:
+          parameterType: STRING
+        model_name:
+          parameterType: STRING
+        namespace:
+          parameterType: STRING
+        replicas:
+          defaultValue: 1.0
+          isOptional: true
+          parameterType: NUMBER_INTEGER
+        routing_mode:
+          parameterType: STRING
+        run_uuid:
+          parameterType: STRING
+        tp:
+          parameterType: NUMBER_INTEGER
+        vllm_args:
+          parameterType: STRING
+    outputDefinitions:
+      artifacts:
+        llmis_yaml:
+          artifactType:
+            schemaTitle: system.Artifact
+            schemaVersion: 0.0.1
+      parameters:
+        deployment_name:
+          parameterType: STRING
+        direct_endpoint:
+          parameterType: STRING
+        target_endpoint:
+          parameterType: STRING
+  comp-run-guidellm-benchmark:
+    executorLabel: exec-run-guidellm-benchmark
+    inputDefinitions:
+      parameters:
+        accelerator:
+          parameterType: STRING
+        deployment_name:
+          parameterType: STRING
+        guidellm_data:
+          parameterType: STRING
+        guidellm_image:
+          parameterType: STRING
+        guidellm_max_seconds:
+          parameterType: STRING
+        guidellm_rate:
+          parameterType: STRING
+        model_name:
+          parameterType: STRING
+        namespace:
+          parameterType: STRING
+        target_endpoint:
+          parameterType: STRING
+        version:
+          parameterType: STRING
+    outputDefinitions:
+      artifacts:
+        benchmark_logs:
+          artifactType:
+            schemaTitle: system.Artifact
+            schemaVersion: 0.0.1
+        benchmark_results:
+          artifactType:
+            schemaTitle: system.Artifact
+            schemaVersion: 0.0.1
+      parameters:
+        Output:
+          parameterType: STRING
+  comp-stream-vllm-logs:
+    executorLabel: exec-stream-vllm-logs
+    inputDefinitions:
+      parameters:
+        deployment_name:
+          parameterType: STRING
+        duration_seconds:
+          defaultValue: 1800.0
+          isOptional: true
+          parameterType: NUMBER_INTEGER
+        namespace:
+          parameterType: STRING
+  comp-upload-to-mlflow:
+    executorLabel: exec-upload-to-mlflow
+    inputDefinitions:
+      artifacts:
+        benchmark_logs:
+          artifactType:
+            schemaTitle: system.Artifact
+            schemaVersion: 0.0.1
+        benchmark_results:
+          artifactType:
+            schemaTitle: system.Artifact
+            schemaVersion: 0.0.1
+        llmis_yaml:
+          artifactType:
+            schemaTitle: system.Artifact
+            schemaVersion: 0.0.1
+      parameters:
+        accelerator:
+          parameterType: STRING
+        guidellm_data:
+          parameterType: STRING
+        guidellm_rate:
+          parameterType: STRING
+        model_name:
+          parameterType: STRING
+        run_uuid:
+          parameterType: STRING
+        tp:
+          parameterType: NUMBER_INTEGER
+        version:
+          parameterType: STRING
+    outputDefinitions:
+      parameters:
+        Output:
+          parameterType: STRING
+  comp-wait-for-endpoint:
+    executorLabel: exec-wait-for-endpoint
+    inputDefinitions:
+      parameters:
+        deployment_name:
+          parameterType: STRING
+        namespace:
+          parameterType: STRING
+        target_endpoint:
+          parameterType: STRING
+        timeout_seconds:
+          defaultValue: 3600.0
+          isOptional: true
+          parameterType: NUMBER_INTEGER
+    outputDefinitions:
+      parameters:
+        Output:
+          parameterType: STRING
+deploymentSpec:
+  executors:
+    exec-cleanup-kueue-workload:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - cleanup_kueue_workload
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.16.0'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef cleanup_kueue_workload(\n    workload_name: str,\n    namespace:\
+          \ str = \"benchmark-system\",\n):\n    \"\"\"Delete Kueue workload on management\
+          \ cluster to release quota.\n\n    This component runs on the management\
+          \ cluster where KFP is installed,\n    so it uses in-cluster credentials\
+          \ (no kubeconfig needed).\n    \"\"\"\n    import subprocess\n    import\
+          \ os\n    import urllib.request\n    import tarfile\n\n    os.environ[\"\
+          PYTHONUNBUFFERED\"] = \"1\"\n\n    # Install oc CLI to /tmp (writable location)\n\
+          \    print(\"Installing OpenShift CLI...\", flush=True)\n    oc_url = \"\
+          https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-linux.tar.gz\"\
+          \n    tar_path = \"/tmp/oc.tar.gz\"\n    bin_path = \"/tmp/bin\"\n    os.makedirs(bin_path,\
+          \ exist_ok=True)\n    urllib.request.urlretrieve(oc_url, tar_path)\n   \
+          \ with tarfile.open(tar_path, \"r:gz\") as tar:\n        tar.extractall(bin_path)\n\
+          \    os.chmod(f\"{bin_path}/oc\", 0o755)\n    os.environ[\"PATH\"] = f\"\
+          {bin_path}:{os.environ.get('PATH', '')}\"\n    print(\"OpenShift CLI installed.\"\
+          , flush=True)\n\n    print(\"=\" * 60, flush=True)\n    print(\"Stage: Cleanup\
+          \ Kueue Workload\", flush=True)\n    print(\"=\" * 60, flush=True)\n   \
+          \ print(f\"Workload: {workload_name}\", flush=True)\n    print(f\"Namespace:\
+          \ {namespace}\", flush=True)\n\n    # Use in-cluster credentials (pipeline\
+          \ runs on management cluster)\n    result = subprocess.run(\n        [\"\
+          oc\", \"delete\", \"workload\", workload_name, \"-n\", namespace, \"--ignore-not-found\"\
+          ],\n        capture_output=True, text=True\n    )\n\n    if result.returncode\
+          \ == 0:\n        print(f\"Deleted workload: {workload_name}\", flush=True)\n\
+          \        print(\"Quota released!\", flush=True)\n    else:\n        print(f\"\
+          Warning: Failed to delete workload: {result.stderr}\", flush=True)\n\n"
+        image: python:3.9-slim
+    exec-cleanup-rhoai-deployment:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - cleanup_rhoai_deployment
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.16.0'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef cleanup_rhoai_deployment(\n    deployment_name: str,\n    namespace:\
+          \ str,\n):\n    \"\"\"Cleanup LLMInferenceService deployment.\"\"\"\n  \
+          \  import subprocess\n    import os\n    import urllib.request\n    import\
+          \ tarfile\n\n    # Force unbuffered output for KFP log streaming\n    os.environ[\"\
+          PYTHONUNBUFFERED\"] = \"1\"\n\n    # Install oc CLI to /tmp (writable location)\n\
+          \    print(\"Installing OpenShift CLI...\", flush=True)\n    oc_url = \"\
+          https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-linux.tar.gz\"\
+          \n    tar_path = \"/tmp/oc.tar.gz\"\n    bin_path = \"/tmp/bin\"\n    os.makedirs(bin_path,\
+          \ exist_ok=True)\n    urllib.request.urlretrieve(oc_url, tar_path)\n   \
+          \ with tarfile.open(tar_path, \"r:gz\") as tar:\n        tar.extractall(bin_path)\n\
+          \    os.chmod(f\"{bin_path}/oc\", 0o755)\n    os.environ[\"PATH\"] = f\"\
+          {bin_path}:{os.environ.get('PATH', '')}\"\n    print(\"OpenShift CLI installed.\"\
+          , flush=True)\n\n    print(\"=\" * 60, flush=True)\n    print(\"Stage 4:\
+          \ Cleanup Deployment\", flush=True)\n    print(\"=\" * 60, flush=True)\n\
+          \n    kubeconfig = \"/kubeconfig/config\"\n\n    def oc(args):\n       \
+          \ cmd = [\"oc\", \"--kubeconfig\", kubeconfig] + args\n        result =\
+          \ subprocess.run(cmd, capture_output=True, text=True)\n        print(result.stdout,\
+          \ flush=True)\n        return result\n\n    print(f\"Deleting LLMInferenceService:\
+          \ {deployment_name}\", flush=True)\n    oc([\"delete\", \"llminferenceservice\"\
+          , deployment_name, \"-n\", namespace, \"--ignore-not-found\"])\n\n    print(\"\
+          Waiting for cleanup...\", flush=True)\n    import time\n    time.sleep(10)\n\
+          \n    print(\"Cleanup complete!\", flush=True)\n\n"
+        image: python:3.9-slim
+    exec-deploy-rhoai-model:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - deploy_rhoai_model
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.16.0'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef deploy_rhoai_model(\n    model_name: str,\n    namespace: str,\n\
+          \    tp: int,\n    routing_mode: str,\n    kueue_queue_name: str,\n    vllm_args:\
+          \ str,\n    run_uuid: str,\n    llmis_yaml: Output[Artifact],\n    enable_auth:\
+          \ str = \"false\",\n    replicas: int = 1,\n    gateway_name: str = \"openshift-ai-inference\"\
+          ,\n    gateway_namespace: str = \"openshift-ingress\",\n) -> NamedTuple(\"\
+          Outputs\", [(\"deployment_name\", str), (\"target_endpoint\", str), (\"\
+          direct_endpoint\", str)]):\n    \"\"\"Deploy model as LLMInferenceService\
+          \ on target cluster.\"\"\"\n    import subprocess\n    import os\n    import\
+          \ urllib.request\n    import tarfile\n\n    # Force unbuffered output for\
+          \ KFP log streaming\n    os.environ[\"PYTHONUNBUFFERED\"] = \"1\"\n\n  \
+          \  # Install oc CLI to /tmp (writable location)\n    print(\"Installing\
+          \ OpenShift CLI...\", flush=True)\n    oc_url = \"https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-linux.tar.gz\"\
+          \n    tar_path = \"/tmp/oc.tar.gz\"\n    bin_path = \"/tmp/bin\"\n    os.makedirs(bin_path,\
+          \ exist_ok=True)\n    urllib.request.urlretrieve(oc_url, tar_path)\n   \
+          \ with tarfile.open(tar_path, \"r:gz\") as tar:\n        tar.extractall(bin_path)\n\
+          \    os.chmod(f\"{bin_path}/oc\", 0o755)\n    os.environ[\"PATH\"] = f\"\
+          {bin_path}:{os.environ.get('PATH', '')}\"\n    print(\"OpenShift CLI installed.\"\
+          , flush=True)\n\n    print(\"=\" * 60, flush=True)\n    print(\"Stage 1:\
+          \ Deploy RHOAI Model (LLMInferenceService)\", flush=True)\n    print(\"\
+          =\" * 60, flush=True)\n\n    kubeconfig = \"/kubeconfig/config\"\n\n   \
+          \ # Generate deployment name (ensure no trailing hyphen)\n    base_name\
+          \ = model_name.lower().replace(\"/\", \"-\").replace(\".\", \"\")[:42].rstrip(\"\
+          -\")\n    if run_uuid:\n        # Use last 5 chars of uuid (more unique\
+          \ than first 5)\n        uuid_suffix = run_uuid[-5:].strip(\"-\")\n    \
+          \    deployment_name = f\"{base_name}-{uuid_suffix}\".rstrip(\"-\")\n  \
+          \  else:\n        deployment_name = base_name\n\n    print(f\"Model: {model_name}\"\
+          , flush=True)\n    print(f\"Deployment: {deployment_name}\", flush=True)\n\
+          \    print(f\"Namespace: {namespace}\", flush=True)\n    print(f\"TP: {tp}\"\
+          , flush=True)\n    print(f\"Routing Mode: {routing_mode}\", flush=True)\n\
+          \    print(\"\", flush=True)\n\n    def oc(args, input_data=None):\n   \
+          \     cmd = [\"oc\", \"--kubeconfig\", kubeconfig] + args\n        print(f\"\
+          $ {' '.join(cmd)}\")\n        result = subprocess.run(cmd, capture_output=True,\
+          \ text=True, input=input_data)\n        if result.stdout:\n            print(result.stdout)\n\
+          \        if result.stderr:\n            print(f\"stderr: {result.stderr}\"\
+          )\n        return result\n\n    # Check connectivity\n    print(\"Checking\
+          \ cluster connectivity...\", flush=True)\n    result = oc([\"cluster-info\"\
+          ])\n    if result.returncode != 0:\n        raise RuntimeError(f\"Cannot\
+          \ connect to cluster: {result.stderr}\")\n\n    # Check if LLMInferenceService\
+          \ already exists\n    result = oc([\"get\", \"llminferenceservice\", deployment_name,\
+          \ \"-n\", namespace])\n    if result.returncode == 0:\n        print(f\"\
+          LLMInferenceService {deployment_name} already exists - reusing\", flush=True)\n\
+          \        # Retrieve existing YAML for artifact\n        result = oc([\"\
+          get\", \"llminferenceservice\", deployment_name, \"-n\", namespace, \"-o\"\
+          , \"yaml\"])\n        if result.returncode == 0:\n            os.makedirs(os.path.dirname(llmis_yaml.path),\
+          \ exist_ok=True)\n            with open(llmis_yaml.path, \"w\") as f:\n\
+          \                f.write(result.stdout)\n            print(f\"Saved existing\
+          \ LLMInferenceService YAML to artifact\", flush=True)\n    else:\n     \
+          \   # Model URI references PVC\n        model_dir_name = model_name.replace(\"\
+          /\", \"-\")\n        model_uri = f\"pvc://models-storage/models/{model_dir_name}\"\
+          \n\n        # Build VLLM_ARGS as YAML (8-space indentation to match args\
+          \ list)\n        vllm_args_yaml = \"\"\n        for arg in vllm_args.split(\"\
+          ,\"):\n            arg = arg.strip()\n            if arg:\n            \
+          \    vllm_args_yaml += f'\\n        - \"{arg}\"'\n\n        # Build labels\n\
+          \        extra_labels = \"\"\n        pod_extra_labels = \"\"\n        if\
+          \ kueue_queue_name:\n            extra_labels += f\"\\n    kueue.x-k8s.io/queue-name:\
+          \ {kueue_queue_name}\"\n            pod_extra_labels += f\"\\n        kueue.x-k8s.io/queue-name:\
+          \ {kueue_queue_name}\"\n        if run_uuid:\n            extra_labels +=\
+          \ f\"\\n    deployment_uuid: {run_uuid}\"\n            pod_extra_labels\
+          \ += f\"\\n        deployment_uuid: {run_uuid}\"\n\n        # Router config\
+          \ based on routing mode\n        if routing_mode == \"direct\":\n      \
+          \      router_config = \"\"\"router:\n    route: {}\n    gateway: {}\n \
+          \   scheduler: {}\"\"\"\n        elif routing_mode == \"prefix-estimation\"\
+          :\n            router_config = f\"\"\"router:\n    scheduler:\n      template:\n\
+          \        containers:\n          - name: main\n            args:\n      \
+          \        - '-v=4'\n              - '--cert-path'\n              - /var/run/kserve/tls\n\
+          \              - '--pool-group'\n              - inference.networking.x-k8s.io\n\
+          \              - '--pool-name'\n              - '{{{{ ChildName .ObjectMeta.Name\
+          \ `-inference-pool` }}}}'\n              - '--pool-namespace'\n        \
+          \      - '{{{{ .ObjectMeta.Namespace }}}}'\n              - '--zap-encoder'\n\
+          \              - json\n              - '--grpc-port'\n              - '9002'\n\
+          \              - '--grpc-health-port'\n              - '9003'\n        \
+          \      - '--secure-serving'\n              - '--model-server-metrics-scheme'\n\
+          \              - https\n              - '--config-text'\n              -\
+          \ |\n                apiVersion: inference.networking.x-k8s.io/v1alpha1\n\
+          \                kind: EndpointPickerConfig\n                plugins:\n\
+          \                - type: single-profile-handler\n                - type:\
+          \ queue-scorer\n                - type: kv-cache-utilization-scorer\n  \
+          \              schedulingProfiles:\n                - name: default\n  \
+          \                plugins:\n                  - pluginRef: queue-scorer\n\
+          \                    weight: 1\n                  - pluginRef: kv-cache-utilization-scorer\n\
+          \                    weight: 2\n    route: {{}}\n    gateway:\n      gatewayRef:\n\
+          \        name: {gateway_name}\n        namespace: {gateway_namespace}\"\"\
+          \"\n        elif routing_mode == \"prefix-precise\":\n            router_config\
+          \ = f\"\"\"router:\n    scheduler:\n      template:\n        containers:\n\
+          \          - name: main\n            args:\n              - '-v=4'\n   \
+          \           - '--cert-path'\n              - /var/run/kserve/tls\n     \
+          \         - '--pool-group'\n              - inference.networking.x-k8s.io\n\
+          \              - '--pool-name'\n              - '{{{{ ChildName .ObjectMeta.Name\
+          \ `-inference-pool` }}}}'\n              - '--pool-namespace'\n        \
+          \      - '{{{{ .ObjectMeta.Namespace }}}}'\n              - '--zap-encoder'\n\
+          \              - json\n              - '--grpc-port'\n              - '9002'\n\
+          \              - '--grpc-health-port'\n              - '9003'\n        \
+          \      - '--secure-serving'\n              - '--model-server-metrics-scheme'\n\
+          \              - https\n              - '--config-text'\n              -\
+          \ |\n                apiVersion: inference.networking.x-k8s.io/v1alpha1\n\
+          \                kind: EndpointPickerConfig\n                plugins:\n\
+          \                - type: single-profile-handler\n                - type:\
+          \ queue-scorer\n                - type: prefix-cache-scorer\n          \
+          \      schedulingProfiles:\n                - name: default\n          \
+          \        plugins:\n                  - pluginRef: queue-scorer\n       \
+          \             weight: 1\n                  - pluginRef: prefix-cache-scorer\n\
+          \                    weight: 3\n    route: {{}}\n    gateway:\n      gatewayRef:\n\
+          \        name: {gateway_name}\n        namespace: {gateway_namespace}\"\"\
+          \"\n        else:\n            raise ValueError(f\"Unknown routing mode:\
+          \ {routing_mode}\")\n\n        # Generate LLMInferenceService YAML\n   \
+          \     llm_yaml = f\"\"\"apiVersion: serving.kserve.io/v1alpha1\nkind: LLMInferenceService\n\
+          metadata:\n  name: {deployment_name}\n  namespace: {namespace}\n  labels:\n\
+          \    app: vllm-inference\n    model: {deployment_name}\n    deployment-mode:\
+          \ rhoai{extra_labels}\n  annotations:\n    security.opendatahub.io/enable-auth:\
+          \ \"{enable_auth}\"\n    llm-d-bench/routing-mode: \"{routing_mode}\"\n\
+          spec:\n  model:\n    name: {model_name}\n    uri: {model_uri}\n  replicas:\
+          \ {replicas}\n  {router_config}\n  template:\n    metadata:\n      labels:\n\
+          \        app: vllm-inference\n        model: {deployment_name}{pod_extra_labels}\n\
+          \    containers:\n    - name: main\n      command: [\"python3\", \"-m\"\
+          , \"vllm.entrypoints.openai.api_server\"]\n      args:\n        - \"--port=8000\"\
+          \n        - \"--host=0.0.0.0\"\n        - \"--model=/mnt/models\"\n    \
+          \    - \"--served-model-name={model_name}\"\n        - \"--tensor-parallel-size={tp}\"\
+          \n        - \"--enable-ssl-refresh\"\n        - \"--ssl-certfile=/var/run/kserve/tls/tls.crt\"\
+          \n        - \"--ssl-keyfile=/var/run/kserve/tls/tls.key\"{vllm_args_yaml}\n\
+          \      resources:\n        limits:\n          nvidia.com/gpu: \"{tp}\"\n\
+          \        requests:\n          nvidia.com/gpu: \"{tp}\"\n      livenessProbe:\n\
+          \        httpGet:\n          path: /health\n          port: 8000\n     \
+          \     scheme: HTTPS\n        initialDelaySeconds: 400\n        periodSeconds:\
+          \ 10\n\"\"\"\n\n        print(\"Generated LLMInferenceService manifest:\"\
+          , flush=True)\n        print(\"=\" * 60, flush=True)\n        print(llm_yaml,\
+          \ flush=True)\n        print(\"=\" * 60, flush=True)\n\n        # Apply\n\
+          \        result = oc([\"apply\", \"-f\", \"-\"], input_data=llm_yaml)\n\
+          \        if result.returncode != 0:\n            raise RuntimeError(f\"\
+          Failed to apply LLMInferenceService: {result.stderr}\")\n\n        print(\"\
+          LLMInferenceService created successfully!\", flush=True)\n\n        # Save\
+          \ YAML to artifact\n        os.makedirs(os.path.dirname(llmis_yaml.path),\
+          \ exist_ok=True)\n        with open(llmis_yaml.path, \"w\") as f:\n    \
+          \        f.write(llm_yaml)\n        print(f\"Saved LLMInferenceService YAML\
+          \ to artifact\", flush=True)\n\n    # Calculate endpoints\n    direct_endpoint\
+          \ = f\"https://{deployment_name}-kserve-workload-svc.{namespace}.svc.cluster.local:8000\"\
+          \n    epp_endpoint = f\"http://{gateway_name}-openshift-default.{gateway_namespace}.svc.cluster.local/{namespace}/{deployment_name}\"\
+          \n\n    if routing_mode == \"direct\":\n        target_endpoint = direct_endpoint\n\
+          \    else:\n        target_endpoint = epp_endpoint\n\n    print(\"\", flush=True)\n\
+          \    print(f\"DEPLOYMENT_NAME: {deployment_name}\", flush=True)\n    print(f\"\
+          DIRECT_ENDPOINT: {direct_endpoint}\", flush=True)\n    print(f\"TARGET_ENDPOINT:\
+          \ {target_endpoint}\", flush=True)\n\n    from collections import namedtuple\n\
+          \    Outputs = namedtuple(\"Outputs\", [\"deployment_name\", \"target_endpoint\"\
+          , \"direct_endpoint\"])\n    return Outputs(deployment_name, target_endpoint,\
+          \ direct_endpoint)\n\n"
+        image: python:3.9-slim
+    exec-run-guidellm-benchmark:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - run_guidellm_benchmark
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.16.0'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef run_guidellm_benchmark(\n    deployment_name: str,\n    model_name:\
+          \ str,\n    target_endpoint: str,\n    namespace: str,\n    guidellm_image:\
+          \ str,\n    guidellm_rate: str,\n    guidellm_data: str,\n    guidellm_max_seconds:\
+          \ str,\n    accelerator: str,\n    version: str,\n    benchmark_results:\
+          \ Output[Artifact],\n    benchmark_logs: Output[Artifact],\n) -> str:\n\
+          \    \"\"\"Run GuideLLM benchmark on target cluster.\"\"\"\n    import subprocess\n\
+          \    import time\n    import os\n    import sys\n    import urllib.request\n\
+          \    import tarfile\n\n    # Force unbuffered output for KFP log streaming\n\
+          \    os.environ[\"PYTHONUNBUFFERED\"] = \"1\"\n\n    # Install oc CLI to\
+          \ /tmp (writable location)\n    print(\"Installing OpenShift CLI...\", flush=True)\n\
+          \    oc_url = \"https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-linux.tar.gz\"\
+          \n    tar_path = \"/tmp/oc.tar.gz\"\n    bin_path = \"/tmp/bin\"\n    os.makedirs(bin_path,\
+          \ exist_ok=True)\n    urllib.request.urlretrieve(oc_url, tar_path)\n   \
+          \ with tarfile.open(tar_path, \"r:gz\") as tar:\n        tar.extractall(bin_path)\n\
+          \    os.chmod(f\"{bin_path}/oc\", 0o755)\n    os.environ[\"PATH\"] = f\"\
+          {bin_path}:{os.environ.get('PATH', '')}\"\n    print(\"OpenShift CLI installed.\"\
+          , flush=True)\n\n    print(\"=\" * 60, flush=True)\n    print(\"Stage 3:\
+          \ Run GuideLLM Benchmark\", flush=True)\n    print(\"=\" * 60, flush=True)\n\
+          \n    kubeconfig = \"/kubeconfig/config\"\n    benchmark_pod = f\"guidellm-{deployment_name[:40]}\"\
+          \n\n    print(f\"Model: {model_name}\", flush=True)\n    print(f\"Target:\
+          \ {target_endpoint}\", flush=True)\n    print(f\"Rates: {guidellm_rate}\"\
+          , flush=True)\n    print(f\"Data: {guidellm_data}\", flush=True)\n    print(f\"\
+          Max Seconds: {guidellm_max_seconds}\", flush=True)\n    print(f\"Benchmark\
+          \ Pod: {benchmark_pod}\", flush=True)\n    print(\"\", flush=True)\n\n \
+          \   def oc(args, input_data=None, timeout=7200):\n        cmd = [\"oc\"\
+          , \"--kubeconfig\", kubeconfig] + args\n        return subprocess.run(cmd,\
+          \ capture_output=True, text=True, input=input_data, timeout=timeout)\n\n\
+          \    # Delete existing pod if any\n    oc([\"delete\", \"pod\", benchmark_pod,\
+          \ \"-n\", namespace, \"--ignore-not-found\"])\n    time.sleep(2)\n\n   \
+          \ # Create benchmark pod\n    pod_yaml = f\"\"\"apiVersion: v1\nkind: Pod\n\
+          metadata:\n  name: {benchmark_pod}\n  namespace: {namespace}\n  labels:\n\
+          \    app: guidellm-benchmark\n    model: {deployment_name}\nspec:\n  restartPolicy:\
+          \ Never\n  containers:\n  - name: guidellm\n    image: {guidellm_image}\n\
+          \    env:\n    - name: GUIDELLM_TARGET\n      value: \"{target_endpoint}\"\
+          \n    - name: GUIDELLM_MODEL\n      value: \"{model_name}\"\n    - name:\
+          \ GUIDELLM_PROCESSOR\n      value: \"{model_name}\"\n    - name: GUIDELLM_BACKEND_TYPE\n\
+          \      value: \"openai_http\"\n    - name: GUIDELLM_RATE_TYPE\n      value:\
+          \ \"concurrent\"\n    - name: GUIDELLM_RATE\n      value: \"{guidellm_rate}\"\
+          \n    - name: GUIDELLM_DATA\n      value: \"{guidellm_data}\"\n    - name:\
+          \ GUIDELLM_MAX_SECONDS\n      value: \"{guidellm_max_seconds}\"\n    - name:\
+          \ MLFLOW_ENABLED\n      value: \"false\"\n    - name: ACCELERATOR\n    \
+          \  value: \"{accelerator}\"\n    - name: VERSION\n      value: \"{version}\"\
+          \n    - name: SSL_CERT_FILE\n      value: \"/var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt\"\
+          \n    - name: HF_HOME\n      value: /tmp/.huggingface\n    - name: GUIDELLM__REQUEST_TIMEOUT\n\
+          \      value: \"1000\"\n    command: [\"/bin/bash\", \"-c\"]\n    args:\n\
+          \      - |\n        echo \"========================================\"\n\
+          \        echo \"Starting GuideLLM Benchmark\"\n        echo \"========================================\"\
+          \n        echo \"Target: $GUIDELLM_TARGET\"\n        echo \"Model: $GUIDELLM_MODEL\"\
+          \n        echo \"Rates: $GUIDELLM_RATE\"\n        echo \"Data: $GUIDELLM_DATA\"\
+          \n        echo \"\"\n\n        python3 -m benchmark.main \\\\\n        \
+          \  --target \"$GUIDELLM_TARGET\" \\\\\n          --model \"$GUIDELLM_MODEL\"\
+          \ \\\\\n          --rate \"$GUIDELLM_RATE\" \\\\\n          --backend-type\
+          \ \"$GUIDELLM_BACKEND_TYPE\" \\\\\n          --rate-type \"$GUIDELLM_RATE_TYPE\"\
+          \ \\\\\n          --data \"$GUIDELLM_DATA\" \\\\\n          --max-seconds\
+          \ $GUIDELLM_MAX_SECONDS \\\\\n          --accelerator \"$ACCELERATOR\" \\\
+          \\\n          --version \"$VERSION\"\n\n        echo \"\"\n        echo\
+          \ \"=== BENCHMARK_RESULTS_JSON_START ===\"\n        if [ -f /benchmark-results/benchmark_output.json\
+          \ ]; then\n          cat /benchmark-results/benchmark_output.json\n    \
+          \    elif [ -f /tmp/benchmark_output.json ]; then\n          cat /tmp/benchmark_output.json\n\
+          \        else\n          echo '{{\"status\": \"completed\", \"rates\": \"\
+          {guidellm_rate}\"}}'\n        fi\n        echo \"=== BENCHMARK_RESULTS_JSON_END\
+          \ ===\"\n    resources:\n      requests:\n        cpu: \"2\"\n        memory:\
+          \ \"4Gi\"\n      limits:\n        cpu: \"4\"\n        memory: \"8Gi\"\n\
+          \    volumeMounts:\n    - name: results\n      mountPath: /benchmark-results\n\
+          \  volumes:\n  - name: results\n    emptyDir: {{}}\n\"\"\"\n\n    print(\"\
+          Creating benchmark pod...\", flush=True)\n    result = oc([\"apply\", \"\
+          -f\", \"-\"], input_data=pod_yaml)\n    if result.returncode != 0:\n   \
+          \     print(f\"Warning: {result.stderr}\", flush=True)\n\n    print(\"Waiting\
+          \ for pod to start...\", flush=True)\n    oc([\"wait\", f\"pod/{benchmark_pod}\"\
+          , \"-n\", namespace, \"--for=condition=Ready\", \"--timeout=300s\"])\n\n\
+          \    # Stream logs in real-time\n    print(\"\", flush=True)\n    print(\"\
+          =\" * 60, flush=True)\n    print(\"STREAMING BENCHMARK OUTPUT\", flush=True)\n\
+          \    print(\"=\" * 60, flush=True)\n    print(\"\", flush=True)\n    sys.stdout.flush()\n\
+          \n    cmd = [\"oc\", \"--kubeconfig\", kubeconfig, \"logs\", \"-f\", benchmark_pod,\
+          \ \"-n\", namespace]\n    process = subprocess.Popen(\n        cmd,\n  \
+          \      stdout=subprocess.PIPE,\n        stderr=subprocess.STDOUT,\n    \
+          \    text=True,\n        bufsize=1\n    )\n\n    logs = []\n    for line\
+          \ in process.stdout:\n        print(line, end='', flush=True)\n        logs.append(line)\n\
+          \n    process.wait()\n    full_logs = ''.join(logs)\n\n    # Extract results\n\
+          \    start_marker = \"=== BENCHMARK_RESULTS_JSON_START ===\"\n    end_marker\
+          \ = \"=== BENCHMARK_RESULTS_JSON_END ===\"\n\n    benchmark_json = '{\"\
+          status\": \"completed\"}'\n    if start_marker in full_logs and end_marker\
+          \ in full_logs:\n        start = full_logs.index(start_marker) + len(start_marker)\n\
+          \        end = full_logs.index(end_marker)\n        benchmark_json = full_logs[start:end].strip()\n\
+          \        print(\"\\nExtracted benchmark results successfully\", flush=True)\n\
+          \n    # Save artifacts\n    os.makedirs(os.path.dirname(benchmark_results.path),\
+          \ exist_ok=True)\n    with open(benchmark_results.path, \"w\") as f:\n \
+          \       f.write(benchmark_json)\n\n    os.makedirs(os.path.dirname(benchmark_logs.path),\
+          \ exist_ok=True)\n    with open(benchmark_logs.path, \"w\") as f:\n    \
+          \    f.write(full_logs)\n    print(f\"Saved benchmark logs to artifact ({len(full_logs)}\
+          \ chars)\", flush=True)\n\n    # Cleanup pod\n    print(\"\\nCleaning up\
+          \ benchmark pod...\", flush=True)\n    oc([\"delete\", \"pod\", benchmark_pod,\
+          \ \"-n\", namespace, \"--ignore-not-found\"])\n\n    return \"completed\"\
+          \n\n"
+        image: python:3.9-slim
+    exec-stream-vllm-logs:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - stream_vllm_logs
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.16.0'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef stream_vllm_logs(\n    deployment_name: str,\n    namespace:\
+          \ str,\n    duration_seconds: int = 1800,\n):\n    \"\"\"Stream vLLM pod\
+          \ logs from remote cluster to KFP dashboard.\"\"\"\n    import subprocess\n\
+          \    import time\n    import sys\n    import os\n    import urllib.request\n\
+          \    import tarfile\n\n    # Force unbuffered output for KFP log streaming\n\
+          \    os.environ[\"PYTHONUNBUFFERED\"] = \"1\"\n\n    # Install oc CLI to\
+          \ /tmp (writable location)\n    print(\"Installing OpenShift CLI...\", flush=True)\n\
+          \    oc_url = \"https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-linux.tar.gz\"\
+          \n    tar_path = \"/tmp/oc.tar.gz\"\n    bin_path = \"/tmp/bin\"\n    os.makedirs(bin_path,\
+          \ exist_ok=True)\n    urllib.request.urlretrieve(oc_url, tar_path)\n   \
+          \ with tarfile.open(tar_path, \"r:gz\") as tar:\n        tar.extractall(bin_path)\n\
+          \    os.chmod(f\"{bin_path}/oc\", 0o755)\n    os.environ[\"PATH\"] = f\"\
+          {bin_path}:{os.environ.get('PATH', '')}\"\n    print(\"OpenShift CLI installed.\"\
+          , flush=True)\n\n    print(\"=\" * 60, flush=True)\n    print(\"Streaming\
+          \ vLLM Logs from Remote Cluster\", flush=True)\n    print(\"=\" * 60, flush=True)\n\
+          \n    kubeconfig = \"/kubeconfig/config\"\n\n    print(f\"Deployment: {deployment_name}\"\
+          , flush=True)\n    print(f\"Namespace: {namespace}\", flush=True)\n    print(f\"\
+          Duration: {duration_seconds}s\", flush=True)\n    print(\"\", flush=True)\n\
+          \n    def oc(args, timeout=60):\n        cmd = [\"oc\", \"--kubeconfig\"\
+          , kubeconfig] + args\n        return subprocess.run(cmd, capture_output=True,\
+          \ text=True, timeout=timeout)\n\n    # Wait for vLLM KServe pod to be ready\n\
+          \    # Use KServe-specific label to avoid matching guidellm pods\n    print(\"\
+          Waiting for vLLM KServe pod...\", flush=True)\n    pod_name = None\n   \
+          \ start = time.time()\n\n    while time.time() - start < 600:\n        #\
+          \ Look for KServe inference pod (not guidellm)\n        result = oc([\"\
+          get\", \"pods\", \"-n\", namespace,\n                     \"-l\", f\"app.kubernetes.io/name={deployment_name}\"\
+          ,\n                     \"-o\", \"jsonpath={.items[0].metadata.name}\"])\n\
+          \        if result.stdout.strip():\n            pod_name = result.stdout.strip()\n\
+          \            # Check phase\n            phase_result = oc([\"get\", \"pod\"\
+          , pod_name, \"-n\", namespace,\n                               \"-o\", \"\
+          jsonpath={.status.phase}\"])\n            if phase_result.stdout.strip()\
+          \ == \"Running\":\n                print(f\"vLLM Pod {pod_name} is Running\"\
+          , flush=True)\n                break\n        print(f\"Waiting for vLLM\
+          \ pod... ({int(time.time() - start)}s)\", flush=True)\n        time.sleep(10)\n\
+          \n    if not pod_name:\n        print(\"ERROR: Could not find vLLM KServe\
+          \ pod\", flush=True)\n        return\n\n    print(\"\", flush=True)\n  \
+          \  print(\"=\" * 60, flush=True)\n    print(f\"STREAMING LOGS FROM: {pod_name}\"\
+          , flush=True)\n    print(\"=\" * 60, flush=True)\n    print(\"\", flush=True)\n\
+          \    sys.stdout.flush()\n\n    # Stream logs using Popen for real-time output\n\
+          \    cmd = [\"oc\", \"--kubeconfig\", kubeconfig, \"logs\", \"-f\", pod_name,\n\
+          \           \"-n\", namespace, \"-c\", \"main\"]\n\n    try:\n        process\
+          \ = subprocess.Popen(\n            cmd,\n            stdout=subprocess.PIPE,\n\
+          \            stderr=subprocess.STDOUT,\n            text=True,\n       \
+          \     bufsize=1\n        )\n\n        start_time = time.time()\n       \
+          \ while time.time() - start_time < duration_seconds:\n            line =\
+          \ process.stdout.readline()\n            if line:\n                print(line,\
+          \ end='', flush=True)\n            elif process.poll() is not None:\n  \
+          \              break\n\n        process.terminate()\n    except Exception\
+          \ as e:\n        print(f\"Log streaming ended: {e}\", flush=True)\n\n  \
+          \  print(\"\", flush=True)\n    print(\"=\" * 60, flush=True)\n    print(\"\
+          vLLM Log Streaming Complete\", flush=True)\n    print(\"=\" * 60, flush=True)\n\
+          \n"
+        image: python:3.9-slim
+    exec-upload-to-mlflow:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - upload_to_mlflow
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'mlflow==2.19.0'\
+          \ 'sagemaker-mlflow' 'boto3' 'pandas'  &&  python3 -m pip install --quiet\
+          \ --no-warn-script-location 'kfp==2.16.0' '--no-deps' 'typing-extensions>=3.7.4,<5;\
+          \ python_version<\"3.9\"' && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef upload_to_mlflow(\n    benchmark_results: dsl.Input[Artifact],\n\
+          \    llmis_yaml: dsl.Input[Artifact],\n    benchmark_logs: dsl.Input[Artifact],\n\
+          \    model_name: str,\n    accelerator: str,\n    version: str,\n    tp:\
+          \ int,\n    run_uuid: str,\n    guidellm_data: str,\n    guidellm_rate:\
+          \ str,\n) -> str:\n    \"\"\"Post-process GuideLLM results and upload to\
+          \ AWS SageMaker MLflow.\"\"\"\n    import json\n    import os\n    import\
+          \ csv\n    import re\n    import sys\n    from typing import Any, Dict\n\
+          \n    os.environ[\"PYTHONUNBUFFERED\"] = \"1\"\n\n    print(\"=\" * 60,\
+          \ flush=True)\n    print(\"Stage: Upload to MLflow\", flush=True)\n    print(\"\
+          =\" * 60, flush=True)\n\n    # AWS SageMaker MLflow ARN (psap-benchmark-runs\
+          \ app)\n    MLFLOW_TRACKING_ARN = \"arn:aws:sagemaker:us-east-1:194365112018:mlflow-app/app-6KQLLW4J4ZQV\"\
+          \n\n    print(f\"Model: {model_name}\", flush=True)\n    print(f\"Accelerator:\
+          \ {accelerator}\", flush=True)\n    print(f\"Version: {version}\", flush=True)\n\
+          \    print(f\"Run UUID: {run_uuid}\", flush=True)\n    print(\"\", flush=True)\n\
+          \n    # Read and parse benchmark JSON from artifact\n    try:\n        with\
+          \ open(benchmark_results.path, \"r\") as f:\n            benchmark_json\
+          \ = f.read()\n        data = json.loads(benchmark_json)\n    except (json.JSONDecodeError,\
+          \ FileNotFoundError) as e:\n        print(f\"ERROR: Failed to read/parse\
+          \ benchmark JSON: {e}\", flush=True)\n        return \"failed\"\n\n    benchmarks\
+          \ = data.get(\"benchmarks\", [])\n    if not benchmarks:\n        print(\"\
+          WARNING: No benchmarks found in results\", flush=True)\n        return \"\
+          no_benchmarks\"\n\n    # Helper to safely get nested values\n    def get_nested(d:\
+          \ Dict[str, Any], *keys, default=None):\n        for key in keys:\n    \
+          \        if not isinstance(d, dict):\n                return default\n \
+          \           d = d.get(key, default)\n        return d\n\n    # Extract token\
+          \ counts from guidellm_data\n    tokens = dict(re.findall(r\"(\\w+)=([\\\
+          d.]+)\", guidellm_data))\n    prompt_tokens = tokens.get(\"prompt_tokens\"\
+          , \"0\")\n    output_tokens = tokens.get(\"output_tokens\", \"0\")\n\n \
+          \   # Import MLflow\n    try:\n        import mlflow\n        import sagemaker_mlflow\n\
+          \        print(f\"MLflow version: {mlflow.__version__}\", flush=True)\n\
+          \    except ImportError as e:\n        print(f\"ERROR: Failed to import\
+          \ MLflow: {e}\", flush=True)\n        return \"mlflow_import_failed\"\n\n\
+          \    # Connect to SageMaker MLflow\n    print(f\"Connecting to MLflow: {MLFLOW_TRACKING_ARN}\"\
+          , flush=True)\n    mlflow.set_tracking_uri(MLFLOW_TRACKING_ARN)\n\n    #\
+          \ Experiment name: {model}-{accelerator}\n    experiment_name = f\"{model_name.replace('/',\
+          \ '-')}-{accelerator}\"\n    print(f\"Experiment: {experiment_name}\", flush=True)\n\
+          \n    try:\n        mlflow.set_experiment(experiment_name)\n    except Exception\
+          \ as e:\n        print(f\"ERROR: Failed to set experiment: {e}\", flush=True)\n\
+          \        return \"experiment_failed\"\n\n    # Extract args from GuideLLM\
+          \ output\n    args = data.get(\"args\", {})\n\n    # Start MLflow run\n\
+          \    try:\n        with mlflow.start_run(run_name=run_uuid) as run:\n  \
+          \          # Log tags\n            mlflow.set_tag(\"run_uuid\", run_uuid)\n\
+          \            mlflow.set_tag(\"pipeline_run_uuid\", run_uuid)\n         \
+          \   mlflow.set_tag(\"model\", model_name)\n            mlflow.set_tag(\"\
+          accelerator\", accelerator)\n            mlflow.set_tag(\"version\", version)\n\
+          \            mlflow.set_tag(\"rate_type\", args.get(\"rate_type\", \"concurrent\"\
+          ))\n\n            # Log parameters\n            params = {\n           \
+          \     \"model\": model_name,\n                \"tp\": tp,\n            \
+          \    \"accelerator\": accelerator,\n                \"version\": version,\n\
+          \                \"run_uuid\": run_uuid,\n                \"rates\": guidellm_rate,\n\
+          \                \"prompt_tokens\": prompt_tokens,\n                \"output_tokens\"\
+          : output_tokens,\n            }\n            if args.get(\"backend_type\"\
+          ):\n                params[\"backend_type\"] = args.get(\"backend_type\"\
+          )\n            if args.get(\"target\"):\n                params[\"target\"\
+          ] = args.get(\"target\")\n            if args.get(\"max_seconds\"):\n  \
+          \              params[\"max_seconds\"] = args.get(\"max_seconds\")\n\n \
+          \           mlflow.log_params(params)\n            print(f\"Logged {len(params)}\
+          \ parameters\", flush=True)\n\n            # Log metrics from each benchmark\
+          \ (with concurrency as step)\n            csv_rows = []\n            for\
+          \ benchmark in benchmarks:\n                # Get concurrency step\n   \
+          \             config = benchmark.get(\"config\") or benchmark.get(\"args\"\
+          , {})\n                try:\n                    concurrency = int(config.get(\"\
+          strategy\", {}).get(\"streams\", 0))\n                except (KeyError,\
+          \ TypeError):\n                    concurrency = 0\n\n                all_metrics\
+          \ = benchmark.get(\"metrics\", {})\n                scheduler_metrics =\
+          \ benchmark.get(\"scheduler_metrics\", {})\n                run_stats =\
+          \ benchmark.get(\"run_stats\", {})\n                requests_made = scheduler_metrics.get(\"\
+          requests_made\", {}) or run_stats.get(\"requests_made\", {})\n\n       \
+          \         # Extract metrics (matching llm-d-bench pattern)\n           \
+          \     metric_map = {\n                    \"total_requests\": requests_made.get(\"\
+          total\"),\n                    \"successful_requests\": requests_made.get(\"\
+          successful\"),\n                    \"failed_requests\": requests_made.get(\"\
+          errored\"),\n                    \"throughput_requests_per_sec\": get_nested(all_metrics,\
+          \ \"requests_per_second\", \"successful\", \"mean\"),\n                \
+          \    \"total_tokens_per_second\": get_nested(all_metrics, \"tokens_per_second\"\
+          , \"successful\", \"mean\"),\n                    \"throughput_output_tokens_per_sec\"\
+          : get_nested(all_metrics, \"output_tokens_per_second\", \"successful\",\
+          \ \"mean\"),\n                    \"request_concurrency_mean\": get_nested(all_metrics,\
+          \ \"request_concurrency\", \"successful\", \"mean\"),\n                \
+          \    \"latency_mean_sec\": get_nested(all_metrics, \"request_latency\",\
+          \ \"successful\", \"mean\"),\n                    \"latency_median_sec\"\
+          : get_nested(all_metrics, \"request_latency\", \"successful\", \"median\"\
+          ),\n                    \"latency_p99_sec\": get_nested(all_metrics, \"\
+          request_latency\", \"successful\", \"percentiles\", \"p99\"),\n        \
+          \            \"ttft_mean_ms\": get_nested(all_metrics, \"time_to_first_token_ms\"\
+          , \"successful\", \"mean\"),\n                    \"ttft_median_ms\": get_nested(all_metrics,\
+          \ \"time_to_first_token_ms\", \"successful\", \"median\"),\n           \
+          \         \"ttft_p95_ms\": get_nested(all_metrics, \"time_to_first_token_ms\"\
+          , \"successful\", \"percentiles\", \"p95\"),\n                    \"ttft_p99_ms\"\
+          : get_nested(all_metrics, \"time_to_first_token_ms\", \"successful\", \"\
+          percentiles\", \"p99\"),\n                    \"tpot_mean_ms\": get_nested(all_metrics,\
+          \ \"time_per_output_token_ms\", \"successful\", \"mean\"),\n           \
+          \         \"tpot_median_ms\": get_nested(all_metrics, \"time_per_output_token_ms\"\
+          , \"successful\", \"median\"),\n                    \"tpot_p95_ms\": get_nested(all_metrics,\
+          \ \"time_per_output_token_ms\", \"successful\", \"percentiles\", \"p95\"\
+          ),\n                    \"tpot_p99_ms\": get_nested(all_metrics, \"time_per_output_token_ms\"\
+          , \"successful\", \"percentiles\", \"p99\"),\n                    \"itl_mean_ms\"\
+          : get_nested(all_metrics, \"inter_token_latency_ms\", \"successful\", \"\
+          mean\"),\n                    \"itl_median_ms\": get_nested(all_metrics,\
+          \ \"inter_token_latency_ms\", \"successful\", \"median\"),\n           \
+          \         \"itl_p95_ms\": get_nested(all_metrics, \"inter_token_latency_ms\"\
+          , \"successful\", \"percentiles\", \"p95\"),\n                    \"itl_p99_ms\"\
+          : get_nested(all_metrics, \"inter_token_latency_ms\", \"successful\", \"\
+          percentiles\", \"p99\"),\n                }\n\n                # Filter\
+          \ out None values and log\n                metrics = {k: v for k, v in metric_map.items()\
+          \ if v is not None}\n\n                # Add calculated metrics\n      \
+          \          if metrics.get(\"total_requests\", 0) > 0 and \"failed_requests\"\
+          \ in metrics:\n                    metrics[\"error_rate\"] = metrics[\"\
+          failed_requests\"] / metrics[\"total_requests\"]\n\n                metrics[\"\
+          concurrency\"] = concurrency\n\n                # Log each metric with concurrency\
+          \ as step\n                for key, value in metrics.items():\n        \
+          \            mlflow.log_metric(key, value, step=concurrency)\n\n       \
+          \         print(f\"Logged {len(metrics)} metrics for concurrency={concurrency}\"\
+          , flush=True)\n\n                # Build CSV row\n                csv_rows.append({\n\
+          \                    \"run\": f\"{accelerator}-{model_name}-{tp}\",\n  \
+          \                  \"accelerator\": accelerator,\n                    \"\
+          model\": model_name,\n                    \"version\": version,\n      \
+          \              \"prompt_toks\": prompt_tokens,\n                    \"output_toks\"\
+          : output_tokens,\n                    \"TP\": tp,\n                    \"\
+          measured_concurrency\": metrics.get(\"request_concurrency_mean\", \"\"),\n\
+          \                    \"intended_concurrency\": concurrency,\n          \
+          \          \"measured_rps\": metrics.get(\"throughput_requests_per_sec\"\
+          , \"\"),\n                    \"output_tok_per_sec\": metrics.get(\"throughput_output_tokens_per_sec\"\
+          , \"\"),\n                    \"ttft_mean_ms\": metrics.get(\"ttft_mean_ms\"\
+          , \"\"),\n                    \"ttft_p99_ms\": metrics.get(\"ttft_p99_ms\"\
+          , \"\"),\n                    \"tpot_mean_ms\": metrics.get(\"tpot_mean_ms\"\
+          , \"\"),\n                    \"tpot_p99_ms\": metrics.get(\"tpot_p99_ms\"\
+          , \"\"),\n                    \"latency_mean_sec\": metrics.get(\"latency_mean_sec\"\
+          , \"\"),\n                    \"latency_p99_sec\": metrics.get(\"latency_p99_sec\"\
+          , \"\"),\n                    \"successful_requests\": metrics.get(\"successful_requests\"\
+          , \"\"),\n                    \"failed_requests\": metrics.get(\"failed_requests\"\
+          , \"\"),\n                    \"uuid\": run_uuid,\n                })\n\n\
+          \            # Generate and upload CSV\n            if csv_rows:\n     \
+          \           csv_path = \"/tmp/benchmark_results.csv\"\n                fieldnames\
+          \ = list(csv_rows[0].keys())\n                with open(csv_path, \"w\"\
+          , newline=\"\") as f:\n                    writer = csv.DictWriter(f, fieldnames=fieldnames)\n\
+          \                    writer.writeheader()\n                    writer.writerows(csv_rows)\n\
+          \n                mlflow.log_artifact(csv_path, \"results\")\n         \
+          \       print(f\"Uploaded CSV artifact: {csv_path}\", flush=True)\n\n  \
+          \          # Upload raw benchmark output.json\n            mlflow.log_artifact(benchmark_results.path,\
+          \ \"results\")\n            print(f\"Uploaded benchmark_output.json to results/\"\
+          , flush=True)\n\n            # Upload LLMInferenceService YAML\n       \
+          \     if os.path.exists(llmis_yaml.path):\n                mlflow.log_artifact(llmis_yaml.path,\
+          \ \"deployment\")\n                print(f\"Uploaded llminferenceservice.yaml\
+          \ to deployment/\", flush=True)\n\n            # Upload benchmark logs\n\
+          \            if os.path.exists(benchmark_logs.path):\n                mlflow.log_artifact(benchmark_logs.path,\
+          \ \"logs\")\n                print(f\"Uploaded guidellm_logs.txt to logs/\"\
+          , flush=True)\n\n            run_id = run.info.run_id\n            print(\"\
+          \", flush=True)\n            print(\"=\" * 60, flush=True)\n           \
+          \ print(f\"MLflow upload complete!\", flush=True)\n            print(f\"\
+          Run ID: {run_id}\", flush=True)\n            print(f\"Experiment: {experiment_name}\"\
+          , flush=True)\n            print(\"=\" * 60, flush=True)\n\n           \
+          \ return run_id\n\n    except Exception as e:\n        print(f\"ERROR: MLflow\
+          \ upload failed: {e}\", flush=True)\n        import traceback\n        traceback.print_exc()\n\
+          \        return \"failed\"\n\n"
+        image: python:3.9-slim
+    exec-wait-for-endpoint:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - wait_for_endpoint
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.16.0'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef wait_for_endpoint(\n    deployment_name: str,\n    target_endpoint:\
+          \ str,\n    namespace: str,\n    timeout_seconds: int = 3600,\n) -> str:\n\
+          \    \"\"\"Wait for inference endpoint to be healthy.\"\"\"\n    import\
+          \ subprocess\n    import time\n    import os\n    import urllib.request\n\
+          \    import tarfile\n\n    # Force unbuffered output for KFP log streaming\n\
+          \    os.environ[\"PYTHONUNBUFFERED\"] = \"1\"\n\n    # Install oc CLI to\
+          \ /tmp (writable location)\n    print(\"Installing OpenShift CLI...\", flush=True)\n\
+          \    oc_url = \"https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-linux.tar.gz\"\
+          \n    tar_path = \"/tmp/oc.tar.gz\"\n    bin_path = \"/tmp/bin\"\n    os.makedirs(bin_path,\
+          \ exist_ok=True)\n    urllib.request.urlretrieve(oc_url, tar_path)\n   \
+          \ with tarfile.open(tar_path, \"r:gz\") as tar:\n        tar.extractall(bin_path)\n\
+          \    os.chmod(f\"{bin_path}/oc\", 0o755)\n    os.environ[\"PATH\"] = f\"\
+          {bin_path}:{os.environ.get('PATH', '')}\"\n    print(\"OpenShift CLI installed.\"\
+          , flush=True)\n\n    print(\"=\" * 60, flush=True)\n    print(\"Stage 2:\
+          \ Wait for Endpoint\", flush=True)\n    print(\"=\" * 60, flush=True)\n\n\
+          \    kubeconfig = \"/kubeconfig/config\"\n\n    print(f\"Deployment: {deployment_name}\"\
+          , flush=True)\n    print(f\"Endpoint: {target_endpoint}\", flush=True)\n\
+          \    print(f\"Timeout: {timeout_seconds}s\", flush=True)\n\n    def oc(args,\
+          \ timeout=120):\n        cmd = [\"oc\", \"--kubeconfig\", kubeconfig] +\
+          \ args\n        return subprocess.run(cmd, capture_output=True, text=True,\
+          \ timeout=timeout)\n\n    # Wait for LLMInferenceService to be ready\n \
+          \   print(\"Waiting for LLMInferenceService to be ready...\", flush=True)\n\
+          \    start = time.time()\n    while time.time() - start < timeout_seconds:\n\
+          \        result = oc([\"get\", \"llminferenceservice\", deployment_name,\
+          \ \"-n\", namespace,\n                     \"-o\", \"jsonpath={.status.conditions[?(@.type=='Ready')].status}\"\
+          ])\n        if result.stdout.strip() == \"True\":\n            print(\"\
+          LLMInferenceService is Ready!\", flush=True)\n            break\n      \
+          \  print(f\"Waiting... ({int(time.time() - start)}s)\", flush=True)\n  \
+          \      time.sleep(15)\n\n    # Test endpoint via curl from a pod\n    print(\"\
+          \", flush=True)\n    print(f\"Testing endpoint: {target_endpoint}/v1/models\"\
+          , flush=True)\n\n    # Find the vLLM KServe pod (use KServe-specific label)\n\
+          \    result = oc([\"get\", \"pods\", \"-n\", namespace,\n              \
+          \   \"-l\", f\"app.kubernetes.io/name={deployment_name}\",\n           \
+          \      \"-o\", \"jsonpath={.items[0].metadata.name}\"])\n    pod_name =\
+          \ result.stdout.strip()\n\n    if pod_name:\n        elapsed = 0\n     \
+          \   while elapsed < 300:\n            result = oc([\"exec\", \"-n\", namespace,\
+          \ pod_name, \"-c\", \"main\", \"--\",\n                         \"curl\"\
+          , \"-sk\", f\"{target_endpoint}/v1/models\"])\n            if \"data\" in\
+          \ result.stdout:\n                print(\"Endpoint is healthy!\", flush=True)\n\
+          \                print(result.stdout[:500], flush=True)\n              \
+          \  return \"healthy\"\n            print(f\"Waiting for endpoint... ({elapsed}s)\"\
+          , flush=True)\n            time.sleep(15)\n            elapsed += 15\n\n\
+          \    print(\"WARNING: Health check timed out\", flush=True)\n    return\
+          \ \"timeout\"\n\n"
+        image: python:3.9-slim
+pipelineInfo:
+  description: RHOAI Benchmark with LLMInferenceService, secret mounting, and log
+    streaming
+  name: rhoai-benchmark-v2
+root:
+  dag:
+    tasks:
+      cleanup:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-cleanup
+        dependentTasks:
+        - deploy-rhoai-model
+        - run-guidellm-benchmark
+        inputs:
+          parameters:
+            deployment_name:
+              taskOutputParameter:
+                outputParameterKey: deployment_name
+                producerTask: deploy-rhoai-model
+            namespace:
+              componentInputParameter: namespace
+            skip_cleanup:
+              componentInputParameter: skip_cleanup
+            workload_name:
+              componentInputParameter: run_uuid
+        taskInfo:
+          name: cleanup
+      condition-1:
+        componentRef:
+          name: comp-condition-1
+        dependentTasks:
+        - deploy-rhoai-model
+        - run-guidellm-benchmark
+        inputs:
+          artifacts:
+            pipelinechannel--deploy-rhoai-model-llmis_yaml:
+              taskOutputArtifact:
+                outputArtifactKey: llmis_yaml
+                producerTask: deploy-rhoai-model
+            pipelinechannel--run-guidellm-benchmark-benchmark_logs:
+              taskOutputArtifact:
+                outputArtifactKey: benchmark_logs
+                producerTask: run-guidellm-benchmark
+            pipelinechannel--run-guidellm-benchmark-benchmark_results:
+              taskOutputArtifact:
+                outputArtifactKey: benchmark_results
+                producerTask: run-guidellm-benchmark
+          parameters:
+            pipelinechannel--accelerator:
+              componentInputParameter: accelerator
+            pipelinechannel--guidellm_data:
+              componentInputParameter: guidellm_data
+            pipelinechannel--guidellm_rate:
+              componentInputParameter: guidellm_rate
+            pipelinechannel--mlflow_enabled:
+              componentInputParameter: mlflow_enabled
+            pipelinechannel--model_name:
+              componentInputParameter: model_name
+            pipelinechannel--run_uuid:
+              componentInputParameter: run_uuid
+            pipelinechannel--tp:
+              componentInputParameter: tp
+            pipelinechannel--version:
+              componentInputParameter: version
+        taskInfo:
+          name: post-processing
+        triggerPolicy:
+          condition: inputs.parameter_values['pipelinechannel--mlflow_enabled'] ==
+            'true'
+      deploy-rhoai-model:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-deploy-rhoai-model
+        inputs:
+          parameters:
+            kueue_queue_name:
+              componentInputParameter: kueue_queue_name
+            model_name:
+              componentInputParameter: model_name
+            namespace:
+              componentInputParameter: namespace
+            routing_mode:
+              componentInputParameter: routing_mode
+            run_uuid:
+              componentInputParameter: run_uuid
+            tp:
+              componentInputParameter: tp
+            vllm_args:
+              componentInputParameter: vllm_args
+        taskInfo:
+          name: deploy-rhoai-model
+      run-guidellm-benchmark:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-run-guidellm-benchmark
+        dependentTasks:
+        - deploy-rhoai-model
+        - wait-for-endpoint
+        inputs:
+          parameters:
+            accelerator:
+              componentInputParameter: accelerator
+            deployment_name:
+              taskOutputParameter:
+                outputParameterKey: deployment_name
+                producerTask: deploy-rhoai-model
+            guidellm_data:
+              componentInputParameter: guidellm_data
+            guidellm_image:
+              componentInputParameter: guidellm_image
+            guidellm_max_seconds:
+              componentInputParameter: guidellm_max_seconds
+            guidellm_rate:
+              componentInputParameter: guidellm_rate
+            model_name:
+              componentInputParameter: model_name
+            namespace:
+              componentInputParameter: namespace
+            target_endpoint:
+              taskOutputParameter:
+                outputParameterKey: target_endpoint
+                producerTask: deploy-rhoai-model
+            version:
+              componentInputParameter: version
+        taskInfo:
+          name: run-guidellm-benchmark
+      stream-vllm-logs:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-stream-vllm-logs
+        dependentTasks:
+        - deploy-rhoai-model
+        inputs:
+          parameters:
+            deployment_name:
+              taskOutputParameter:
+                outputParameterKey: deployment_name
+                producerTask: deploy-rhoai-model
+            duration_seconds:
+              runtimeValue:
+                constant: 1800.0
+            namespace:
+              componentInputParameter: namespace
+        taskInfo:
+          name: stream-vllm-logs
+      wait-for-endpoint:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-wait-for-endpoint
+        dependentTasks:
+        - deploy-rhoai-model
+        inputs:
+          parameters:
+            deployment_name:
+              taskOutputParameter:
+                outputParameterKey: deployment_name
+                producerTask: deploy-rhoai-model
+            namespace:
+              componentInputParameter: namespace
+            target_endpoint:
+              taskOutputParameter:
+                outputParameterKey: target_endpoint
+                producerTask: deploy-rhoai-model
+        taskInfo:
+          name: wait-for-endpoint
+  inputDefinitions:
+    parameters:
+      accelerator:
+        defaultValue: H200
+        isOptional: true
+        parameterType: STRING
+      guidellm_data:
+        defaultValue: prompt_tokens=1000,output_tokens=1000
+        isOptional: true
+        parameterType: STRING
+      guidellm_image:
+        defaultValue: image-registry.openshift-image-registry.svc:5000/llm-d-bench/guidellm-custom:v0.5.3
+        isOptional: true
+        parameterType: STRING
+      guidellm_max_seconds:
+        defaultValue: '120'
+        isOptional: true
+        parameterType: STRING
+      guidellm_rate:
+        defaultValue: 1,10
+        isOptional: true
+        parameterType: STRING
+      kubeconfig_secret:
+        defaultValue: h200-kubeconfig
+        isOptional: true
+        parameterType: STRING
+      kueue_queue_name:
+        defaultValue: benchmark-queue
+        isOptional: true
+        parameterType: STRING
+      mlflow_enabled:
+        defaultValue: 'false'
+        isOptional: true
+        parameterType: STRING
+      model_name:
+        defaultValue: Qwen/Qwen3-0.6B
+        isOptional: true
+        parameterType: STRING
+      namespace:
+        defaultValue: llm-d-bench
+        isOptional: true
+        parameterType: STRING
+      routing_mode:
+        defaultValue: direct
+        isOptional: true
+        parameterType: STRING
+      run_uuid:
+        defaultValue: ''
+        isOptional: true
+        parameterType: STRING
+      skip_cleanup:
+        defaultValue: false
+        isOptional: true
+        parameterType: BOOLEAN
+      tp:
+        defaultValue: 4.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      version:
+        defaultValue: RHOAI-3.2
+        isOptional: true
+        parameterType: STRING
+      vllm_args:
+        defaultValue: --max-model-len=8192,--gpu-memory-utilization=0.95
+        isOptional: true
+        parameterType: STRING
+schemaVersion: 2.1.0
+sdkVersion: kfp-2.16.0
+---
+platforms:
+  kubernetes:
+    deploymentSpec:
+      executors:
+        exec-cleanup-rhoai-deployment:
+          secretAsVolume:
+          - mountPath: /kubeconfig
+            optional: false
+            secretName: h200-kubeconfig
+            secretNameParameter:
+              runtimeValue:
+                constant: h200-kubeconfig
+        exec-deploy-rhoai-model:
+          secretAsVolume:
+          - mountPath: /kubeconfig
+            optional: false
+            secretNameParameter:
+              componentInputParameter: kubeconfig_secret
+        exec-run-guidellm-benchmark:
+          secretAsVolume:
+          - mountPath: /kubeconfig
+            optional: false
+            secretNameParameter:
+              componentInputParameter: kubeconfig_secret
+        exec-stream-vllm-logs:
+          secretAsVolume:
+          - mountPath: /kubeconfig
+            optional: false
+            secretNameParameter:
+              componentInputParameter: kubeconfig_secret
+        exec-upload-to-mlflow:
+          secretAsEnv:
+          - keyToEnv:
+            - envVar: AWS_ACCESS_KEY_ID
+              secretKey: AWS_ACCESS_KEY_ID
+            - envVar: AWS_SECRET_ACCESS_KEY
+              secretKey: AWS_SECRET_ACCESS_KEY
+            - envVar: AWS_DEFAULT_REGION
+              secretKey: AWS_DEFAULT_REGION
+            optional: false
+            secretName: aws-credentials
+            secretNameParameter:
+              runtimeValue:
+                constant: aws-credentials
+        exec-wait-for-endpoint:
+          secretAsVolume:
+          - mountPath: /kubeconfig
+            optional: false
+            secretNameParameter:
+              componentInputParameter: kubeconfig_secret

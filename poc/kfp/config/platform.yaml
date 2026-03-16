@@ -1,0 +1,26 @@
+# Platform-wide configuration for benchmark pipeline
+# Environment variables take precedence: MGMT_KUBECONFIG, KFP_HOST
+
+management:
+  # Management cluster kubeconfig (where KFP and Kueue run)
+  kubeconfig: "~/.kube/config"
+  # Namespace for Kueue workloads
+  namespace: "benchmark-system"
+
+kfp:
+  # KFP pipeline UI host (override with KFP_HOST env var)
+  host: "http://ml-pipeline-ui-kubeflow.apps.mehulvalidation.example.com"
+  namespace: "kubeflow"
+
+mlflow:
+  # AWS SageMaker MLflow
+  tracking_uri: "https://us-east-1.sagemaker.aws.amazon.com"
+  s3_bucket: "sagemaker-us-east-1-194365112018"
+
+defaults:
+  # Default target cluster (override via --cluster CLI flag)
+  cluster: "rhaiis-h200"
+  # Default benchmark namespace on target clusters
+  namespace: "llm-d-bench"
+  # Default Kueue queue
+  kueue_queue: "benchmark-queue"

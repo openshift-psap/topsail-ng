@@ -1,0 +1,52 @@
+name: "RHAIIS 3.2.3 Release Benchmarks"
+description: "Full benchmark suite for RHAIIS 3.2.3 release"
+experiment: "rhaiis-3.2.3-h200"
+
+defaults:
+  version: "RHAIIS-3.2.3"
+  mlflow_enabled: true
+  clear_prefix_cache: false
+  routing_mode: direct
+
+# Matrix: 3 models × 3 workloads × 1 cluster = 9 experiments
+matrix:
+  models:
+    - qwen-0.6b
+  workloads:
+    - balanced
+    - short
+  clusters:
+    - h200-cluster
+
+# Explicit scenarios with overrides
+scenarios:
+  # Test prefix-estimation routing (EPP with kv-cache-utilization-scorer)
+  - name: "llama-70b-prefix-estimation"
+    model: llama-70b-fp8
+    workload: balanced
+    cluster: h200-cluster
+    routing_mode: prefix-estimation
+    overrides:
+      guidellm_rate: "1,10,25"
+      max_seconds: 300
+
+  # Test prefix-precise routing (EPP with prefix-cache-scorer)
+  - name: "llama-70b-prefix-precise"
+    model: llama-70b-fp8
+    workload: balanced
+    cluster: h200-cluster
+    routing_mode: prefix-precise
+    clear_prefix_cache: true
+    overrides:
+      guidellm_rate: "1,10,25"
+      max_seconds: 300
+
+  # Multi-turn conversation test
+  - name: "qwen-multi-turn-session"
+    model: qwen-0.6b
+    workload: multi-turn
+    cluster: h200-cluster
+    routing_mode: direct
+    overrides:
+      guidellm_rate: "1,5"
+      max_seconds: 900

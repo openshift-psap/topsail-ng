@@ -1,0 +1,60 @@
+workloads:
+  balanced:
+    name: "Balanced"
+    type: "balanced"
+    description: "Balanced prompt and output tokens (1k/1k)"
+    workflow: "standard"
+    guidellm_data: "prompt_tokens=1000,output_tokens=1000"
+    guidellm_rate_type: "concurrent"
+    guidellm_rate: "1,50,100,200"
+    max_seconds: 180
+
+  long-prompt:
+    name: "Long Prompt"
+    type: "balanced"
+    description: "Long prompt, standard output (8k/1k)"
+    workflow: "standard"
+    guidellm_data: "prompt_tokens=8000,output_tokens=1000"
+    guidellm_rate_type: "concurrent"
+    guidellm_rate: "1,25,50,100"
+    max_seconds: 300
+
+  short:
+    name: "Short"
+    type: "balanced"
+    description: "Short prompt and output (256/256)"
+    workflow: "standard"
+    guidellm_data: "prompt_tokens=256,output_tokens=256"
+    guidellm_rate_type: "concurrent"
+    guidellm_rate: "1,50,100,200"
+    max_seconds: 120
+
+  very-long-prompt:
+    name: "Very Long Prompt"
+    type: "balanced"
+    description: "Very long prompt (16k/1k)"
+    workflow: "standard"
+    guidellm_data: "prompt_tokens=16000,output_tokens=1000"
+    guidellm_rate_type: "concurrent"
+    guidellm_rate: "1,10,25,50"
+    max_seconds: 600
+
+  heterogeneous:
+    name: "Heterogeneous"
+    type: "heterogeneous"
+    description: "Mixed token distributions simulating real traffic"
+    workflow: "standard"
+    guidellm_data: "emulated"
+    guidellm_rate_type: "concurrent"
+    guidellm_rate: "1,25,50"
+    max_seconds: 300
+
+  multi-turn:
+    name: "Multi-Turn"
+    type: "multi_turn"
+    description: "Multi-turn conversation with context reuse"
+    workflow: "multi_turn"
+    guidellm_data: "multi_turn"
+    guidellm_rate_type: "concurrent"
+    guidellm_rate: "1,10,25"
+    max_seconds: 600

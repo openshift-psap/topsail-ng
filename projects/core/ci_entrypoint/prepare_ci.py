@@ -14,9 +14,13 @@ import threading
 import time
 import subprocess
 import glob
+import json
+import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, List
+
+IS_LIGHTWEIGHT_IMAGE = os.environ.get("TOPSAIL_LIGHT_IMAGE")
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -160,6 +164,160 @@ def parse_and_save_pr_arguments() -> Optional[Path]:
         return None
 
 
+def precheck_artifact_dir() -> bool:
+    """
+    Ensure ARTIFACT_DIR is set up and accessible.
+
+    Returns:
+        bool: True if ARTIFACT_DIR is ready, False otherwise
+    """
+    artifact_dir = os.environ.get('ARTIFACT_DIR')
+
+    if artifact_dir:
+        logger.info(f"Using ARTIFACT_DIR={artifact_dir}.")
+        return
+
+    if os.environ.get('OPENSHIFT_CI') == 'true':
+        raise RuntimeError("ARTIFACT_DIR not set, cannot proceed without it in OpenShift CI.")
+
+    logger.info("ARTIFACT_DIR not set, but not running in a CI. Creating a directory for it ...")
+
+    # Create default ARTIFACT_DIR
+    default_dir = f"/tmp/topsail_{datetime.now().strftime('%Y%m%d')}"
+    os.environ['ARTIFACT_DIR'] = default_dir
+    Path(default_dir).mkdir(parents=True, exist_ok=True)
+    logger.info(f"Using ARTIFACT_DIR={default_dir} as default artifacts directory.")
+
+
+def ci_banner(project: str, operation: str, args: List[str]):
+    """
+    Display CI execution banner with git information.
+
+    Args:
+        project: Project name being executed
+        operation: Operation being executed
+        args: Additional arguments
+    """
+    print(f"""\
+===> Running PSAP CI Test suite <===
+===> {project} {operation} {' '.join(args)} <===
+""")
+
+    base_sha = os.environ.get("PULL_BASE_SHA", "main")
+    if base_sha == "main":
+        logger.warning(f"PULL_BASE_SHA not set. Showing the last commits from main.")
+    pull_sha = os.environ.get("PULL_PULL_SHA", "")
+    if not pull_sha:
+        logger.warning(f"PULL_PULL_SHA not set. Showing the last commits from main.")
+
+    try:
+        result = subprocess.run(
+            ["git", "show", "--quiet", "--oneline", f"{base_sha}..{pull_sha}"],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        if result.returncode == 0:
+            lines = result.stdout.split('\n')[:10]  # head 10
+            for line in lines:
+                logging.info(line)
+        else:
+            logger.warning("Could not access git history (main..) ...")
+    except Exception:
+        logger.warning("Could not access git history...")
+
+
+def system_prechecks() -> bool:
+    """
+    Perform pre-execution checks and setup.
+
+    Returns:
+        bool: True if all prechecks pass, False otherwise
+    """
+    artifact_dir = os.environ.get('ARTIFACT_DIR')
+    if not artifact_dir:
+        raise ValueError("ARTIFACT_DIR not set, cannot perform prechecks")
+
+    artifact_path = Path(artifact_dir)
+
+    # Check for existing failures
+    failures_file = artifact_path / "FAILURES"
+    if failures_file.exists():
+        raise ValueError(f"File '{failures_file}' already exists, cannot continue.")
+
+    # Handle OpenShift CI PR arguments (already handled by parse_and_save_pr_arguments)
+    if (os.environ.get('OPENSHIFT_CI') == 'true' and
+        os.environ.get('TOPSAIL_LOCAL_CI_MULTI') != 'true' and
+        os.environ.get('TOPSAIL_JUMP_CI_INSIDE_JUMP_HOST') != 'true'):
+
+        if not os.environ.get('TOPSAIL_OPENSHIFT_CI_STEP_DIR'):
+            hostname = os.environ.get('HOSTNAME', '')
+            job_name_safe = os.environ.get('JOB_NAME_SAFE', '')
+            if hostname and job_name_safe:
+                step_dir = hostname.replace(f"{job_name_safe}-", "") + "/artifacts"
+                os.environ['TOPSAIL_OPENSHIFT_CI_STEP_DIR'] = step_dir
+
+    # Remove any old failure markers
+    old_failure = artifact_path / "FAILURE"
+    if old_failure.exists():
+        old_failure.unlink()
+
+    # Store git versions
+    try:
+        # TOPSAIL git version
+        result = subprocess.run(
+            ["git", "describe", "HEAD", "--long", "--always"],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        topsail_version = result.stdout.strip() if result.returncode == 0 else "git missing"
+        (artifact_path / "topsail.git_version").write_text(topsail_version + "\n")
+        logger.info(f"Saving TOPSAIL git version into {artifact_path}/topsail.git_version")
+
+        # Matrix-benchmarking git version (if exists)
+        matbench_dir = Path(__file__).parent.parent.parent / "matrix_benchmarking" / "subproject"
+        if matbench_dir.exists():
+            result = subprocess.run(
+                ["git", "-C", str(matbench_dir), "describe", "HEAD", "--long", "--always"],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            matbench_version = result.stdout.strip() if result.returncode == 0 else "git missing"
+            (artifact_path / "matbench.git_version").write_text(matbench_version + "\n")
+    except Exception as e:
+        logger.warning(f"Could not store git versions: {e}")
+
+    # Download PR information if available
+    pull_number = os.environ.get('PULL_NUMBER')
+    if pull_number:
+        repo_owner = os.environ.get('REPO_OWNER', 'openshift-psap')
+        repo_name = os.environ.get('REPO_NAME', 'topsail-ng')
+
+        pr_url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/pulls/{pull_number}"
+        pr_comments_url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/issues/{pull_number}/comments"
+
+        try:
+            # Download PR data
+            result = subprocess.run(
+                ["curl", "-sSf", pr_url, "-o", str(artifact_path / "pull_request.json")],
+                timeout=30
+            )
+            if result.returncode != 0:
+                logger.warning(f"Failed to download the PR from {pr_url}")
+
+            # Download PR comments
+            result = subprocess.run(
+                ["curl", "-sSf", pr_comments_url, "-o", str(artifact_path / "pull_request-comments.json")],
+                timeout=30
+            )
+            if result.returncode != 0:
+                logger.warning(f"Failed to download the PR comments from {pr_comments_url}")
+        except Exception as e:
+            logger.warning(f"Could not download PR information: {e}")
+
+
 def setup_environment_variables():
     """
     Set up any additional environment variables needed for CI execution.
@@ -183,31 +341,48 @@ def validate_prerequisites():
     """
     logger.debug("Validating CI prerequisites")
 
-    # Add validation logic here
-    # For now, just return True
-    return True
+    # Check for required tools
+    if not shutil.which('jq'):
+        raise RuntimeError("jq not found. Can't continue.")
+
+    if IS_LIGHTWEIGHT_IMAGE:
+        return
+
+    # Check for required tools
+    if not shutil.which('oc'):
+        raise RuntimeError("oc not found. Can't continue.")
 
 
-def prepare(verbose: bool = False) -> bool:
+def prepare(verbose: bool = False, project: str = "", operation: str = "", args: List[str] = None):
     """
     Execute all CI preparation tasks.
 
     Args:
         verbose: Enable verbose output
+        project: Project name being executed
+        operation: Operation being executed
+        args: Additional arguments    """
+    if args is None:
+        args = []
 
-    Returns:
-        bool: True if preparation was successful, False otherwise
-    """
     logger.info("Starting CI preparation")
 
     try:
-        # Set up environment
+        # Set up ARTIFACT_DIR
+        precheck_artifact_dir()
+
+        # Display CI banner
+        if project and operation:
+            ci_banner(project, operation, args)
+
+        # Set up environment variables
         setup_environment_variables()
 
+        # Perform prechecks
+        system_prechecks()
+
         # Validate prerequisites
-        if not validate_prerequisites():
-            logger.error("Prerequisites validation failed")
-            return False
+        validate_prerequisites()
 
         # Parse and save PR arguments if in PR context
         pr_args_file = parse_and_save_pr_arguments()
@@ -217,11 +392,10 @@ def prepare(verbose: bool = False) -> bool:
             logger.debug(f"PR arguments saved to: {pr_args_file}")
 
         logger.info("CI preparation completed successfully")
-        return True
 
     except Exception as e:
         logger.error(f"CI preparation failed: {e}")
-        return False
+        raise
 
 
 def format_duration(duration_seconds: int) -> str:
@@ -230,19 +404,6 @@ def format_duration(duration_seconds: int) -> str:
     minutes = (duration_seconds % 3600) // 60
     seconds = duration_seconds % 60
     return f"after {hours:02d} hours {minutes:02d} minutes {seconds:02d} seconds"
-
-
-def check_cluster_reachable() -> bool:
-    """Check if cluster is reachable via oc command."""
-    try:
-        result = subprocess.run(
-            ["oc", "version"],
-            capture_output=True,
-            timeout=10
-        )
-        return result.returncode == 0
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        return False
 
 
 def postchecks(project: str, operation: str, start_time: Optional[float], success: str) -> str:

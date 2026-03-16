@@ -306,13 +306,19 @@ def execute_project_operation(project: str, operation: str, args: tuple, verbose
 
     # Execute CI preparation tasks
     if prepare_ci:
-        preparation_success = prepare_ci.prepare(verbose=verbose)
-        if not preparation_success:
+        try:
+            prepare_ci.prepare(
+                verbose=verbose,
+                project=project,
+                operation=operation,
+                args=list(args),
+            )
+        except:
             click.echo(
                 click.style("❌ ERROR: CI preparation failed", fg='red'),
                 err=True
             )
-            sys.exit(1)
+            raise
     else:
         logger.warning("CI preparation module not available, skipping preparation")
 

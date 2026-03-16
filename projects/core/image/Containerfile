@@ -1,0 +1,75 @@
+# TOPSAIL-NG Test Harness Container
+#
+# This container provides the runtime environment for CI-first, reproducible
+# and observable performance & scale testing of OpenShift AI.
+#
+# Constitutional Compliance:
+# - CI-First Testing: Containerized execution ensures consistent CI environments
+# - Reproducible Results: Locked dependencies and consistent base image
+# - Scale-Aware Design: Lightweight container for efficient resource usage
+
+FROM quay.io/centos/centos:stream10
+
+# Metadata
+LABEL name="topsail-ng" \
+      description="TOPSAIL-NG Test Harness - Performance & Scale Testing for OpenShift AI" \
+      maintainer="Red Hat PSAP Team <psap@redhat.com>"
+
+# Install essential tools
+RUN dnf install -y \
+    python3 python3-pip\
+    git \
+    curl \
+    wget \
+    jq \
+    which \
+    procps-ng \
+    && dnf clean all
+
+# Install uv for fast Python package management
+RUN pip install --no-cache-dir uv
+
+# Install OpenShift CLI (oc)
+RUN curl -LO "https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-linux.tar.gz" && \
+    tar -xzf openshift-client-linux.tar.gz && \
+    chmod +x oc && \
+    mv oc /usr/local/bin/ && \
+    rm -f openshift-client-linux.tar.gz kubectl
+
+# Optimize uv for container environments
+ENV UV_COMPILE_BYTECODE=1
+ENV UV_SYSTEM_PYTHON=1
+
+# Set working directory
+WORKDIR /app/topsail
+ENV HOME=/app/topsail
+
+# Copy project configuration
+COPY pyproject.toml ./
+
+# Install Python dependencies using uv
+RUN uv lock && \
+    uv pip install --system -r pyproject.toml
+
+# Copy the application code
+COPY . .
+
+# Create non-root user for security
+RUN groupadd -g 1001 topsail && \
+    useradd -u 1001 -g topsail -s /bin/bash -d /app/topsail -M topsail && \
+    chown -R topsail:topsail /app/topsail
+
+# Make sure that the home directory can be written by OCP random user ID
+RUN chgrp -R 0 "$HOME" && chmod -R g=u "$HOME"
+RUN rm -rf /home
+
+# Switch to non-root user (OpenShift doesn't respect that, it uses a random user ID for security)
+USER 1001
+
+# Set environment variables
+ENV PYTHONPATH=/app/topsail \
+    PYTHONUNBUFFERED=1 \
+    TOPSAIL_HOME=/app/topsail
+
+# Default command (can be overridden)
+CMD ["bash"]

@@ -1,0 +1,103 @@
+---
+- name: Ensure that the lock is owned
+  include_role:
+    name: jump_ci_ensure_lock
+    # sets cluster_kubeconfig
+  vars:
+    jump_ci_ensure_lock_cluster: "{{ jump_ci_prepare_step_cluster }}"
+    jump_ci_ensure_lock_owner: "{{ jump_ci_prepare_step_lock_owner }}"
+
+- name: Fetch the name of the image to use
+  shell:
+    cat "{{ cluster_lock_dir }}/pod.image"
+  register: pod_image_cmd
+  failed_when: false
+
+- name: Fail if the image file is not set
+  when: pod_image_cmd.rc != 0
+  fail: msg="The pod image isn't prepared. Did the 'prepare_topsail' step run?"
+
+- name: Generate the step artifacts dirname
+  set_fact:
+    step_artifact_dir: "{{ cluster_lock_dir }}/test/{{ jump_ci_prepare_step_step }}"
+
+- name: Ensure that the step artifacts dirname directory is empty
+  ansible.builtin.file:
+    state: absent
+    path: "{{ step_artifact_dir }}"
+    mode: '0755'
+  no_log: true # can be too chatty when cleaning an existing artifacts directly
+
+- name: Ensure that the step test dirname directory exists
+  ansible.builtin.file:
+    state: directory
+    path: "{{ step_artifact_dir }}"
+    mode: '0755'
+
+- name: Ensure that the step test artifacts dirname directory exists
+  ansible.builtin.file:
+    state: directory
+    path: "{{ step_artifact_dir }}/artifacts"
+    mode: '0755'
+
+- name: Copy the env file
+  ansible.builtin.copy:
+    src: "{{ jump_ci_prepare_step_env_file }}"
+    dest: "{{ step_artifact_dir }}/test_env"
+    mode: '0644'
+
+- name: Copy all the jump-host env file locally
+  ansible.posix.synchronize:
+    src: "{{ step_artifact_dir }}/test_env"
+    dest: "{{ artifact_extra_logs_dir }}/jump_host.env"
+    mode: "pull"
+  no_log: true # not necessary, and leaks the hostnames
+
+- name: Populate the variables_overrides files
+  shell: |
+    cat <<EOF >> {{ step_artifact_dir }}/artifacts/variable_overrides.yaml
+    {{ (jump_ci_prepare_step_variables_overrides_dict or {}) | to_nice_yaml }}
+    EOF
+
+- name: Copy all the jump-host env file locally
+  ansible.posix.synchronize:
+    src: "{{ step_artifact_dir }}/artifacts/variable_overrides.yaml"
+    dest: "{{ artifact_extra_logs_dir }}/variable_overrides.yaml"
+    mode: "pull"
+  no_log: true # not necessary, and leaks the hostnames
+
+- name: Ensure that the secrets directory exists
+  ansible.builtin.file:
+    state: directory
+    path: "{{ cluster_lock_dir }}/secrets/{{ jump_ci_prepare_step_secrets_path_env_key }}"
+    mode: '0755'
+
+- name: Copy the secrets to the jump host
+  ansible.posix.synchronize:
+    src: "{{ lookup('env', jump_ci_prepare_step_secrets_path_env_key) }}/"
+    dest: "{{ cluster_lock_dir }}/secrets/{{ jump_ci_prepare_step_secrets_path_env_key }}/"
+    mode: "push"
+  no_log: true # not necessary, and leaks the hostnames and secret filenames (they aren't secret)
+  when: jump_ci_prepare_step_secrets_path_env_key
+
+- name: Ensure that the secret dirs have the right permission
+  command: find "{{ cluster_lock_dir }}/secrets" -type d -exec chmod 0755 {} \;
+
+- name: Ensure that the secret files have the right permission
+  command: find "{{ cluster_lock_dir }}/secrets/" -type f -exec chmod 0400 {} \;
+
+- name: Prepare the entrypoint script
+  template:
+    src: "{{ entrypoint_template }}"
+    dest: "{{ step_artifact_dir }}/entrypoint.sh"
+    mode: '0400'
+
+- name: Copy all the entrypoint file locally
+  ansible.posix.synchronize:
+    src: "{{ step_artifact_dir }}/entrypoint.sh"
+    dest: "{{ artifact_extra_logs_dir }}/entrypoint.sh"
+    mode: "pull"
+  no_log: true # not necessary, and leaks the hostnames
+
+- name: Show the launch command
+  debug: msg="run 'bash {{ step_artifact_dir }}/entrypoint.sh' in the remote host"

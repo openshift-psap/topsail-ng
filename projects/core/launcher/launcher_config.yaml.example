@@ -1,0 +1,20 @@
+# TOPSAIL Launcher Configuration
+# Copy this file to launcher_config.yaml and customize as needed
+
+topsail_home: "~/topsail-ng"
+topsail_toolbox_name: "topsail-ng"  # Container name for toolbox
+topsail_toolbox_command: "bash"
+container_image: "localhost/topsail-ng:latest"
+container_file: "projects/core/image/Containerfile"  # Optional: defaults to topsail_home/projects/core/image/Containerfile
+topsail_image_extra_pkg: "vim git-core"
+
+# Environment variables to export to the container
+exported_env_vars:
+  - "PSAP_ODS_SECRET_PATH"
+  - "KUBECONFIG"
+  - "OPENSHIFT_BUILD_NAMESPACE"
+  - "OPENSHIFT_BUILD_REFERENCE"
+  # Add more environment variables as needed
+
+# Example custom image name:
+# container_image: "my-custom-topsail-image"

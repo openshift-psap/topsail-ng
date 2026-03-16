@@ -1,0 +1,46 @@
+---
+- name: Log whoami
+  shell:
+    whoami
+
+- name: Ensure that the cluster kubeconfig file exists
+  when: jump_ci_ensure_lock_check_kubeconfig | bool
+  block:
+  - name: Ensure that ansible_env exists
+    fail: msg="ansible_env does not exists. Make sure that the gather_facts command run. In TOPSAIL, the role needs to run remotely. Or set --check_kubeconfig=false"
+    when: ansible_env is not defined
+
+  - name: Prepare the cluster kubeconfig path
+    set_fact:
+      cluster_kubeconfig: "{{ ansible_env.HOME }}/.kube/config.{{ jump_ci_ensure_lock_cluster }}"
+
+  - name: Ensure that the KUBECONFIG file exists
+    stat:
+      path: "{{ cluster_kubeconfig }}"
+    register: cluster_kubeconfig_stat
+
+  - name: Fail if the cluster's KUBECONFIG file doesn't exist
+    fail: msg="The cluster KUBECONFIG ({{ cluster_kubeconfig }}) does not exists"
+    when: not cluster_kubeconfig_stat.stat.exists
+
+- name: Save the name of the cluster lock directory
+  set_fact:
+    cluster_lock_dir: "/tmp/topsail_{{ jump_ci_ensure_lock_cluster }}"
+
+- name: "Get the stats of the lock directory: {{ jump_ci_ensure_lock_cluster }}"
+  stat:
+    path: "{{ cluster_lock_dir }}"
+  register: lock_directory_stat
+
+- name: Fail if the lock directory doesn't exist
+  fail: msg="The lock directory '{{ cluster_lock_dir }}' does not exists"
+  when: not lock_directory_stat.stat.exists
+
+- name: Get the owner of the lock
+  command:
+    cat "{{ cluster_lock_dir }}/lock_owner"
+  register: lock_owner_content_cmd
+
+- name: Fail if the owner is different
+  when: lock_owner_content_cmd.stdout | trim != jump_ci_ensure_lock_owner
+  fail: msg="Unexpected lock owner. Found '{{ lock_owner_content_cmd.stdout }}', expected '{{ jump_ci_ensure_lock_owner }}'"

@@ -1,0 +1,14 @@
+# TOPSAIL Launcher Configuration
+# Using lowercase keys for cleaner YAML
+
+topsail_home: "/var/home/kpouget/openshift/topsail-ng"
+topsail_toolbox_name: "topsail-ng"
+topsail_toolbox_command: "zsh"
+container_image: "localhost/topsail-ng:latest"
+container_file: "projects/core/image/Containerfile"
+topsail_image_extra_pkg: "zsh flatpak-spawn gnupg2"
+
+# Environment variables to export to the container
+exported_env_vars:
+  - "PSAP_ODS_SECRET_PATH"
+  - "KUBECONFIG"

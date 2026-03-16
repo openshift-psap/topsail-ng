@@ -27,6 +27,7 @@ from typing import List, Optional
 
 TOPSAIL_HOME = Path(__file__).resolve().parent.parent.parent.parent
 
+
 def setup_logging():
     """Set up logging configuration."""
     logging.basicConfig(
@@ -103,8 +104,12 @@ except ImportError:
 
 # Import CI preparation module
 try:
-    from prepare_ci import prepare
+    import prepare_ci
     logger.info("CI preparation module imported successfully")
+
+    # Set up dual output as early as possible
+    prepare_ci.setup_dual_output()
+
 except ImportError as e:
     logger.warning(f"CI preparation module not available: {e}")
     prepare = None
@@ -299,8 +304,8 @@ def execute_project_operation(project: str, operation: str, args: tuple, verbose
         click.echo(f"Arguments: {list(args)}")
 
     # Execute CI preparation tasks
-    if prepare:
-        preparation_success = prepare(verbose=verbose)
+    if prepare_ci:
+        preparation_success = prepare_ci.prepare(verbose=verbose)
         if not preparation_success:
             click.echo(
                 click.style("❌ ERROR: CI preparation failed", fg='red'),

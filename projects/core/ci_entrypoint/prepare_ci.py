@@ -10,6 +10,7 @@ import os
 import sys
 import logging
 import yaml
+import threading
 from pathlib import Path
 from typing import Optional
 
@@ -30,6 +31,59 @@ except ImportError as e:
     parse_pr_arguments = None
 
 
+# Dual output
+def setup_dual_output():
+    """
+    Set up stdout/stderr to write to both console and log file.
+
+    If ARTIFACT_DIR is set, all output will go to both console and $ARTIFACT_DIR/run.log
+    This is permanent for the rest of the program execution.
+    """
+    artifact_dir = os.environ.get('ARTIFACT_DIR')
+
+    if not artifact_dir:
+        logging.warning("ARTIFACT_DIR not defined, not saving $ARTIFACT_DIR/run.log")
+        return None
+
+    log_file_path = Path(artifact_dir) / "run.log"
+
+    try:
+        log_file_path.parent.mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        logging.warning(f"Failed to create directory: {e}")
+        return None
+
+    if log_file_path.exists():
+        with log_file_path.open(mode="a", encoding="utf-8") as f:
+            f.write("--------------\n")
+            f.write("| New CI run |\n")
+            f.write("--------------\n")
+
+    # 1. Save the original terminal stdout so we can still write to it
+    original_stdout_fd = os.dup(sys.stdout.fileno())
+
+    # 2. Create a pipe: (read_fd, write_fd)
+    read_fd, write_fd = os.pipe()
+
+    # 3. Replace the process's ACTUAL stdout and stderr with the write-end of our pipe
+    os.dup2(write_fd, sys.stdout.fileno())
+    os.dup2(write_fd, sys.stderr.fileno())
+
+    def communicate():
+        with open(log_file_path, "a") as log_file, os.fdopen(original_stdout_fd, "w") as terminal:
+            # Open the read-end of the pipe
+            with os.fdopen(read_fd, "r") as pipe_in:
+                for line in pipe_in:
+                    terminal.write(line) # Send to console
+                    log_file.write(line) # Send to file
+                    terminal.flush()
+                    log_file.flush()
+
+    # 4. Start a background thread to act as the 'tee' process
+    daemon = threading.Thread(target=communicate, daemon=True)
+    daemon.start()
+
+# PR arguments
 def parse_and_save_pr_arguments() -> Optional[Path]:
     """
     Parse GitHub PR arguments and save to variable overrides file.
@@ -38,7 +92,7 @@ def parse_and_save_pr_arguments() -> Optional[Path]:
         Path to saved file if successful, None otherwise
     """
     if not parse_pr_arguments:
-        logger.debug("PR arguments parser not available")
+        logger.warning("PR arguments parser not available")
         return None
 
     # Check if we're in a PR context
@@ -48,7 +102,7 @@ def parse_and_save_pr_arguments() -> Optional[Path]:
     artifact_dir = os.environ.get('ARTIFACT_DIR')
 
     if not all([repo_owner, repo_name, pull_number_str]):
-        logger.debug("Not in GitHub PR context - missing environment variables")
+        logger.info("Not in GitHub PR context - missing environment variables")
         return None
 
     if not artifact_dir:

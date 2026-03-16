@@ -17,11 +17,27 @@ Examples:
     run skeleton validate
 """
 
+
 import os
 import sys
 import subprocess
+import logging
 from pathlib import Path
 from typing import List, Optional
+
+TOPSAIL_HOME = Path(__file__).resolve().parent.parent.parent.parent
+
+def setup_logging():
+    """Set up logging configuration."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(levelname)s: %(message)s',
+        handlers=[logging.StreamHandler(sys.stderr)]
+    )
+
+# Set up logging
+setup_logging()
+logger = logging.getLogger(__name__)
 
 # Install click package using uv (as non-root user)
 try:
@@ -85,7 +101,14 @@ except ImportError:
             print(f"🔍 User site: {user_site}")
             sys.exit(1)
 
-TOPSAIL_HOME = Path(__file__).parent.parent
+# Import CI preparation module
+try:
+    from prepare_ci import prepare
+    logger.info("CI preparation module imported successfully")
+except ImportError as e:
+    logger.warning(f"CI preparation module not available: {e}")
+    prepare = None
+
 
 def find_project_directory(project_name: str) -> Optional[Path]:
     """
@@ -194,12 +217,24 @@ def show_project_operations(project: str):
         )
         return
 
-    # List Python files in the project directory
     python_files = []
+    def add_python_file(file_path):
+        if not file_path.is_file():
+            return
+        # Skip files that are not executable
+        if not os.access(file_path, os.X_OK):
+            return
+
+        operation_name = file_path.stem  # filename without .py extension
+        python_files.append((operation_name, file_path))
+
+
+    # List Python files in the project directory
+    for file_path in (project_dir / "orchestration").glob("*.py"):
+        add_python_file(file_path)
+
     for file_path in project_dir.glob("*.py"):
-        if file_path.is_file():
-            operation_name = file_path.stem  # filename without .py extension
-            python_files.append((operation_name, file_path))
+        add_python_file(file_path)
 
     if not python_files:
         click.echo("⚠️  No Python files found in project directory")
@@ -212,9 +247,6 @@ def show_project_operations(project: str):
     operation_files = []
 
     for operation_name, file_path in sorted(python_files):
-        # Skip files that are not executable
-        if not os.access(file_path, os.X_OK):
-            continue
         operation_files.append((operation_name, file_path))
 
     for operation_name, file_path in operation_files:
@@ -265,6 +297,18 @@ def execute_project_operation(project: str, operation: str, args: tuple, verbose
         click.echo(f"Project: {project}")
         click.echo(f"Operation: {operation}")
         click.echo(f"Arguments: {list(args)}")
+
+    # Execute CI preparation tasks
+    if prepare:
+        preparation_success = prepare(verbose=verbose)
+        if not preparation_success:
+            click.echo(
+                click.style("❌ ERROR: CI preparation failed", fg='red'),
+                err=True
+            )
+            sys.exit(1)
+    else:
+        logger.warning("CI preparation module not available, skipping preparation")
 
     # Find project directory
     project_dir = find_project_directory(project)

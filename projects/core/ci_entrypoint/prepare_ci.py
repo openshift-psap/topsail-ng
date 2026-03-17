@@ -44,20 +44,20 @@ except ImportError as e:
     logger.warning(f"GitHub PR arguments parser not available: {e}")
     parse_pr_arguments = None
 
-# Import notifications module
-try:
-    # Add the notifications directory to Python path
-    notifications_dir = Path(__file__).parent.parent / "notifications"
-    if str(notifications_dir) not in sys.path:
-        sys.path.insert(0, str(notifications_dir))
+def load_notification_module():
+    # Import notifications module
+    try:
+        # Add the notifications directory to Python path
+        notifications_dir = Path(__file__).parent.parent / "notifications"
+        if str(notifications_dir) not in sys.path:
+            sys.path.insert(0, str(notifications_dir))
 
-    from send import send_job_completion_notification
-    logger.info("Notifications module imported successfully")
-    NOTIFICATIONS_AVAILABLE = True
-except ImportError as e:
-    logger.warning(f"Notifications module not available: {e}")
-    NOTIFICATIONS_AVAILABLE = False
-
+        import projects.core.notifications.send as send
+        logger.info("Notifications module imported successfully")
+        return send.send_job_completion_notification
+    except ImportError as e:
+        logger.exception(f"Notifications module not available: {e}")
+        return None
 
 # Dual output
 def setup_dual_output():
@@ -426,7 +426,8 @@ def format_duration(duration_seconds: int) -> str:
     return f"after {hours:02d} hours {minutes:02d} minutes {seconds:02d} seconds"
 
 def send_notification(project: str, operation: str, finish_reason: FinishReason, duration: str):
-    if not NOTIFICATIONS_AVAILABLE:
+    send_job_completion_notification = load_notification_module()
+    if not send_job_completion_notification:
         logger.info("Notifications module not available, skipping notification sending")
         return
 
@@ -442,7 +443,7 @@ def send_notification(project: str, operation: str, finish_reason: FinishReason,
         # Check for dry run mode
         dry_run = os.environ.get('TOPSAIL_NOTIFICATION_DRY_RUN', 'false').lower() == 'true'
 
-        logger.info(f"Sending notifications - finish_reason: {finish_reason}, GitHub: {github_notifications}, Slack: {slack_notifications}, dry_run: {dry_run}")
+        logger.info(f"Sending notifications - finish_reason: {finish_reason} | GitHub: {github_notifications}, Slack: {slack_notifications}, dry_run: {dry_run}")
 
         # Send the notification
         notification_failed = send_job_completion_notification(

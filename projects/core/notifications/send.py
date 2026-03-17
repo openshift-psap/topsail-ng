@@ -5,11 +5,11 @@ import json
 import yaml
 import html
 
-#try:
-#    import github.api as github_api
-#except ImportError as e:
-#    logging.warning(f"Cannot import the github API: {e}")
-github_api = None
+try:
+    import github.api as github_api
+except ImportError as e:
+    logging.warning(f"Cannot import the github API: {e}")
+    github_api = None
 
 import slack.api as slack_api
 

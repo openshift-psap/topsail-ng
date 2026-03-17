@@ -2,7 +2,7 @@ import datetime
 import logging
 import sys
 
-from projects.core.library.ansible_toolbox import (
+from projects.legacy.library.ansible_toolbox import (
     RunAnsibleRole, AnsibleRole,
     AnsibleMappedParams, AnsibleConstant,
     AnsibleSkipConfigGeneration,

@@ -8,7 +8,7 @@ import logging
 logging.getLogger().setLevel(logging.INFO)
 import yaml
 
-from projects.core.library import env, config, run, configure_logging
+from projects.legacy.library import env, config, run, configure_logging
 configure_logging()
 
 from projects.jump_ci.testing import utils, prepare_jump_ci, tunnelling

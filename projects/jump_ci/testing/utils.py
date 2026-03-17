@@ -4,7 +4,7 @@ import functools
 import tempfile
 import os
 
-from projects.core.library import env, config
+from projects.legacy.library import env, config
 import utils_gethostname
 
 TESTING_THIS_DIR = pathlib.Path(__file__).absolute().parent

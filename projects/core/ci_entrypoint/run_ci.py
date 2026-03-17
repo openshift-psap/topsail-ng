@@ -22,11 +22,54 @@ import os
 import sys
 import subprocess
 import logging
+import signal
 import time
 from pathlib import Path
 from typing import List, Optional
 
 TOPSAIL_HOME = Path(__file__).resolve().parent.parent.parent.parent
+
+EXTRA_PACKAGES = ["click", "requests"]
+
+def signal_handler_sigint(sig, frame):
+    """Handle SIGINT (Ctrl+C) gracefully."""
+    print(f"\n🚫 Received SIGINT (Ctrl+C) - Interrupting CI operation...")
+
+    # Emergency cleanup of dual output
+    if prepare_ci:
+        try:
+            prepare_ci.shutdown_dual_output()
+        except Exception:
+            pass  # Don't let cleanup errors prevent signal handling
+
+    sys.exit(130)  # Standard exit code for SIGINT
+
+
+def signal_handler_sigterm(sig, frame):
+    """Handle SIGTERM gracefully."""
+    print(f"\n🛑 Received SIGTERM - Terminating CI operation...")
+
+    # Emergency cleanup of dual output
+    if prepare_ci:
+        try:
+            prepare_ci.shutdown_dual_output()
+        except Exception:
+            pass  # Don't let cleanup errors prevent signal handling
+
+    sys.exit(143)  # Standard exit code for SIGTERM
+
+
+def setup_signal_handlers():
+    """Set up signal handlers for graceful interruption."""
+    try:
+        signal.signal(signal.SIGINT, signal_handler_sigint)
+        signal.signal(signal.SIGTERM, signal_handler_sigterm)
+        # SIGPIPE handling for broken pipes
+        if hasattr(signal, 'SIGPIPE'):
+            signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+    except Exception:
+        # Signal handling might not be available on all platforms
+        pass
 
 
 def setup_logging():
@@ -37,71 +80,65 @@ def setup_logging():
         handlers=[logging.StreamHandler(sys.stderr)]
     )
 
-# Set up logging
-setup_logging()
-logger = logging.getLogger(__name__)
+def install_extra_packages(packages):
 
-# Install click package using uv (as non-root user)
-try:
-    import click
-except ImportError:
-    print("📦 Installing click package...")
+    print(f"📦 Installing {'/'.join(packages)} packages...")
 
     # Try uv first with no-cache to avoid permission issues
-    install_success = False
     try:
         subprocess.run(
-            ["uv", "pip", "install", "--no-cache", "click"],
+            ["uv", "pip", "install", "--no-cache", *packages],
             check=True,
             capture_output=True
         )
-        print("✅ Click package installed successfully with uv")
-        install_success = True
+        print(f"✅ {'/'.join(packages)} packages installed successfully with uv")
     except (FileNotFoundError, subprocess.CalledProcessError):
         # Fallback to pip with user installation
         try:
             subprocess.run(
-                [sys.executable, "-m", "pip", "install", "--user", "--no-cache-dir", "click"],
+                [sys.executable, "-m", "pip", "install", "--user", "--no-cache-dir", *packages],
                 check=True,
                 capture_output=True
             )
-            print("✅ Click package installed successfully with pip")
-            install_success = True
+            print(f"✅ {'/'.join(packages)} packages installed successfully with pip")
         except subprocess.CalledProcessError as pip_error:
-            print(f"❌ Failed to install click: {pip_error}")
-            sys.exit(1)
+            print(f"❌ Failed to install {'/'.join(packages)}: {pip_error}")
+            raise RuntimeError("failed to install the extra packages")
 
-    if install_success:
-        # Ensure user site-packages is in path
-        import site
-        user_site = site.getusersitepackages()
-        if user_site not in sys.path:
-            sys.path.insert(0, user_site)
+    # Ensure user site-packages is in path
+    import site
+    user_site = site.getusersitepackages()
+    if user_site not in sys.path:
+        sys.path.insert(0, user_site)
 
-        # Also check for common install locations
-        import os
-        possible_paths = [
-            os.path.expanduser("~/.local/lib/python3.11/site-packages"),
-            os.path.expanduser("~/.local/lib/python3.12/site-packages"),
-            os.path.expanduser("~/.local/lib/python3.13/site-packages"),
-            user_site
-        ]
+    # Also check for common install locations
+    import os
+    possible_paths = [
+        os.path.expanduser("~/.local/lib/python3.11/site-packages"),
+        os.path.expanduser("~/.local/lib/python3.12/site-packages"),
+        os.path.expanduser("~/.local/lib/python3.13/site-packages"),
+        user_site
+    ]
 
-        for path in possible_paths:
-            if os.path.exists(path) and path not in sys.path:
-                sys.path.insert(0, path)
+    for path in possible_paths:
+        if os.path.exists(path) and path not in sys.path:
+            sys.path.insert(0, path)
 
-        # Clear import cache and try again
-        import importlib
-        importlib.invalidate_caches()
+    # Clear import cache and try again
+    import importlib
+    importlib.invalidate_caches()
 
-        try:
-            import click
-        except ImportError:
-            print("❌ Click installation failed - module not found after installation")
-            print(f"🔍 Python path: {sys.path}")
-            print(f"🔍 User site: {user_site}")
-            sys.exit(1)
+# Set up logging
+setup_logging()
+logger = logging.getLogger(__name__)
+
+# Set up signal handlers for graceful interruption
+setup_signal_handlers()
+
+# Install click package using uv (as non-root user)
+install_extra_packages(EXTRA_PACKAGES)
+
+import click
 
 # Import CI preparation module
 try:
@@ -375,7 +412,7 @@ def execute_project_operation(project: str, operation: str, args: tuple, verbose
 
     # Execute the command
     click.echo(f"▶️  Executing {project} {operation} {' '.join(args)}")
-
+    click.echo(" ".join(cmd))
     try:
         # Track start time for duration calculation
         start_time = time.time()
@@ -385,32 +422,38 @@ def execute_project_operation(project: str, operation: str, args: tuple, verbose
             cwd=project_dir,
             check=False  # Don't raise exception on non-zero exit
         )
+        click.echo(f"▶️  Executing {project} {operation} {' '.join(args)} --> {result.returncode}")
 
-        success = result.returncode == 0
+        finish_reason = prepare_ci.FinishReason.SUCCESS if result.returncode == 0 \
+            else prepare_ci.FinishReason.ERROR
 
+        success = finish_reason == prepare_ci.FinishReason.SUCCESS
         # Post-execution checks and status reporting
         if prepare_ci:
-            status_message = prepare_ci.postchecks(project, operation, start_time, success)
-
-            msg = click.style(status_message, fg='green' if success else 'red')
+            status_message = prepare_ci.postchecks(project, operation, start_time, finish_reason)
+            msg = click.style(status_message, \
+                              fg='green' if success else 'red')
         else:
             # Fallback to simple messages if prepare_ci not available
-            msg = click.style(f"✅ {project} {operation} completed successfully", fg='green') if success \
-                else  click.style(f"❌ {project} {operation} failed with exit code {result.returncode}", fg='red')
-
+            if success:
+                msg = click.style(f"✅ {project} {operation} completed successfully", fg='green')
+            else:
+                msg = click.style(f"❌ {project} {operation} failed with exit code {result.returncode}", fg='red')
         click.echo(msg, err=not success)
-
         sys.exit(result.returncode)
 
-    except FileNotFoundError as e:
-        click.echo(
-            click.style(f"❌ ERROR: Failed to execute CI script: {e}", fg='red'),
-            err=True
-        )
-        sys.exit(1)
     except Exception as e:
+        logging.exception("Unexpected exception")
+
+        # Emergency cleanup of dual output to prevent hanging
+        if prepare_ci:
+            try:
+                prepare_ci.shutdown_dual_output()
+            except Exception:
+                pass  # Don't let cleanup errors mask the original error
+
         click.echo(
-            click.style(f"❌ ERROR: Unexpected error during execution: {e}", fg='red'),
+            click.style(f"❌ ERROR: Unexpected error during execution", fg='red'),
             err=True
         )
         sys.exit(1)

@@ -16,7 +16,7 @@ This Python launcher (`topsail_launcher.py`) provides the same functionality as 
 
 ### 1. Setup Configuration
 
-Copy and customize the configuration:
+The launcher automatically copies `launcher_config.yaml.example` to `launcher_config.yaml` on first run if the config file doesn't exist. You can also copy it manually:
 
 ```bash
 cp launcher_config.yaml.example launcher_config.yaml
@@ -33,13 +33,21 @@ container_image: "localhost/topsail-ng:latest"
 container_file: "projects/core/image/Containerfile"  # Relative to topsail_home
 topsail_image_extra_pkg: "vim git-core zsh"
 
-# Environment variables exported to container
+# Environment variables exported from current environment to container
 exported_env_vars:
   - "PSAP_ODS_SECRET_PATH"
   - "KUBECONFIG"
   - "OPENSHIFT_BUILD_NAMESPACE"
   - "OPENSHIFT_BUILD_REFERENCE"
+
+# Custom environment variables (key/value pairs) to set in the container
+custom_env_vars:
+  ARTIFACT_DIR: "/tmp/topsail-artifacts"
+  CUSTOM_CONFIG: "production"
+  DEBUG_LEVEL: "verbose"
 ```
+
+> **Note**: The `launcher_config.yaml` file is ignored by git, so you can safely add personal credentials and paths without them being committed to version control.
 
 ### 2. Build and Setup
 
@@ -87,6 +95,8 @@ exported_env_vars:
 | `status` | Show environment status and readiness |
 | `config` | Display current configuration |
 | `config --set KEY VALUE` | Update configuration |
+| `config --set-env VAR VALUE` | Set custom environment variable |
+| `config --edit` | Edit configuration file with $EDITOR |
 
 ### Examples
 
@@ -106,6 +116,13 @@ exported_env_vars:
 # Update configuration
 ./topsail_launcher.py config --set topsail_toolbox_command zsh
 ./topsail_launcher.py config --set container_image my-custom-image:latest
+
+# Set custom environment variables
+./topsail_launcher.py config --set-env ARTIFACT_DIR /tmp/my-artifacts
+./topsail_launcher.py config --set-env DEBUG_LEVEL verbose
+
+# Edit config file directly
+./topsail_launcher.py config --edit
 ```
 
 ## Configuration Options
@@ -121,7 +138,11 @@ exported_env_vars:
 
 ### Environment Variables
 
-The `exported_env_vars` list controls which environment variables are passed to the container:
+The launcher supports two types of environment variables:
+
+#### 1. Exported Environment Variables
+
+The `exported_env_vars` list controls which environment variables from your current shell are passed to the container:
 
 ```yaml
 exported_env_vars:
@@ -133,6 +154,31 @@ exported_env_vars:
 ```
 
 Variables not in your environment are silently ignored.
+
+#### 2. Custom Environment Variables
+
+The `custom_env_vars` dictionary allows you to set specific key/value pairs directly in the container:
+
+```yaml
+custom_env_vars:
+  ARTIFACT_DIR: "/tmp/topsail-artifacts"
+  CUSTOM_CONFIG: "production"
+  DEBUG_LEVEL: "verbose"
+  API_ENDPOINT: "https://api.example.com"
+```
+
+These variables are set regardless of your current environment.
+
+#### Setting Environment Variables via CLI
+
+```bash
+# Set a custom environment variable
+./topsail_launcher.py config --set-env ARTIFACT_DIR /tmp/my-artifacts
+./topsail_launcher.py config --set-env DEBUG_LEVEL verbose
+
+# View current environment variables
+./topsail_launcher.py config
+```
 
 ## Verbose Mode
 
@@ -209,11 +255,24 @@ Check your current configuration:
 ./topsail_launcher.py config
 ```
 
+Edit configuration directly:
+
+```bash
+# Open config file in your default editor
+./topsail_launcher.py config --edit
+
+# Or edit specific settings via CLI
+./topsail_launcher.py config --set topsail_home /new/path
+./topsail_launcher.py config --set-env CUSTOM_VAR value
+```
+
 Verify paths exist and are correct:
 
 ```bash
 ls -la $(./topsail_launcher.py config | grep topsail_home | cut -d: -f2 | tr -d ' ')
 ```
+
+**Note**: The configuration file `launcher_config.yaml` is automatically ignored by git, so you can safely store personal paths and credentials.
 
 ## Migration from Bash Scripts
 

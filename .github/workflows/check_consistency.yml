@@ -1,0 +1,31 @@
+# Check repository consistency
+name: Check consistency
+
+on:
+  # Triggers the workflow on push or pull request events but only for the main branch
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    - cron: '0 */8 * * *'
+
+jobs:
+  check_topsail_consistency:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: ./.github/steps/prepare_minimal_ubuntu_image
+
+      - name: Check that all the variables point to existing files
+        run: ./run_toolbox.py repo validate_role_files
+
+      - name: Check that all the variables defined are actually used
+        run: ./run_toolbox.py repo validate_role_vars_used
+
+      - name: Check that no symlink is broken
+        run: ./run_toolbox.py repo validate_no_broken_link

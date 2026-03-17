@@ -38,7 +38,7 @@ ci_presets:
 secrets:
   dir:
     name: psap-ods-secret
-    env_key: PSAP_ODS_SECRET_PATH
+    env_key: PSAP_TOPSAIL_JUMP_CI_SECRET_PATH # CRC_MAC_AI_SECRET_PATH
   private_key_filename: jumpci_privatekey
   bastion_host_filename: jumpci_bastion_host
   bastion_host_user_filename: jumpci_bastion_host_user

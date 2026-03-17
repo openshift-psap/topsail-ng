@@ -29,6 +29,7 @@ dependencies = [
     "jsonschema>=4.19.0",
     "structlog>=23.1.0",
     "click>=8.1.0",
+    "requests",
     "slack_sdk==3.35.0",
     "ansible",
 ]

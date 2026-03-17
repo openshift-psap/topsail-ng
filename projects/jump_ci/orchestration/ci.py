@@ -7,10 +7,24 @@ This is the JumpCI CI entrypoint. It's used to run TOPSAIL-ng remotely inside a 
 import sys
 import subprocess
 import time
+import os
 from pathlib import Path
 import types
 
 import click
+
+# Add the testing directory to path for imports
+testing_dir = Path(__file__).parent.parent / "testing"
+if str(testing_dir) not in sys.path:
+    sys.path.insert(0, str(testing_dir))
+
+# Import jump CI testing functionality
+try:
+    import prepare_jump_ci as prepare_jump_ci_mod
+    import utils
+    from test import jump_ci as run_on_jump_ci
+except ImportError as e:
+    raise RuntimeError(f"Jump CI testing functionality not available: {e}")
 
 
 class JumpCITestRunner:
@@ -25,155 +39,84 @@ class JumpCITestRunner:
         icon = {"info": "ℹ️", "success": "✅", "error": "❌", "warning": "⚠️"}.get(level, "ℹ️")
         click.echo(f"{icon} [{self.project_name}] {message}")
 
-    def execute_command(self, command: str, description: str = None) -> bool:
-        """Execute a shell command and return success status."""
-        if description:
-            self.log(f"Executing: {description}")
+    def lock_cluster(self):
+        """
+        Prepare phase - Lock cluster for exclusive access
+        """
+        self.log("Locking cluster for exclusive access...")
+        try:
+            prepare_jump_ci_mod.lock_cluster()
+            self.log("Cluster locked successfully", "success")
+        except Exception as e:
+            self.log(f"Lock phase failed: {e}", "error")
+            return 1
 
-        if self.verbose:
-            self.log(f"Running command: {command}")
+    def unlock_cluster(self):
+        """
+        Teardown phase - Unlock cluster exclusive access
+        """
+
+        self.log("Unlocking the cluster...")
+        try:
+            prepare_jump_ci_mod.unlock_cluster()
+            self.log("Cluster unlocked successfully", "success")
+        except Exception as e:
+            self.log(f"Unlock cluster phase failed: {e}", "error")
+            return 1
+
+    def prepare_jump_ci(self):
+        self.log("Starting prepare_jump_ci phase...")
 
         try:
-            start_time = time.time()
-            result = subprocess.run(
-                command,
-                shell=True,
-                capture_output=True,
-                text=True,
-                check=False
-            )
-            duration = time.time() - start_time
-
-            if result.returncode == 0:
-                if self.verbose and result.stdout:
-                    self.log(f"Output: {result.stdout.strip()}")
-                self.log(f"Command completed in {duration:.2f}s")
-                return True
-            else:
-                self.log(f"Command failed (exit code {result.returncode})", "error")
-                if result.stderr:
-                    self.log(f"Error: {result.stderr.strip()}", "error")
-                return False
+            prepare_jump_ci_mod.prepare_jump_ci()
+            self.log("Jump CI environment prepared", "success")
+            return 0
 
         except Exception as e:
-            self.log(f"Command execution failed: {e}", "error")
-            return False
+            self.log(f"Prepare_jump_ci phase failed: {e}", "error")
+            return 1
 
     def prepare(self):
-        """
-        Prepare phase - Set up environment and dependencies.
-
-        This phase should prepare everything needed for testing:
-        - Install dependencies
-        - Set up configuration
-        - Prepare test data
-        - Initialize resources
-        """
         self.log("Starting prepare phase...")
 
-        # Example: Check configuration
-        config_file = Path(__file__).parent / "config.yaml"
-        if config_file.exists():
-            self.log("Found config.yaml, loading configuration", "info")
-        else:
-            self.log("No config.yaml found, using defaults", "warning")
+        try:
+            ret = run_on_jump_ci("test_ci")
+            self.log("Jump CI environment prepared", "success" if not ret else "error")
+            return ret
 
-        # Example: Environment setup
-        if not self.execute_command(
-            "echo 'Setting up Jump CI project environment'",
-            "Setting up environment"
-        ):
+        except Exception as e:
+            self.log(f"Prepare phase failed: {e}", "error")
             return 1
-
-        # Example: Install dependencies (replace with actual commands)
-        if not self.execute_command(
-            "echo 'Installing project dependencies'",
-            "Installing dependencies"
-        ):
-            return 1
-
-        # Example: Validate prerequisites
-        if not self.execute_command(
-            "echo 'Validating prerequisites' && echo 'All checks passed'",
-            "Validating prerequisites"
-        ):
-            self.log("Prerequisites validation failed!", "error")
-            return 1
-
-        self.log("Prepare phase completed!", "success")
-        return 0
 
     def test(self):
         """
         Test phase - Execute the main testing logic.
-
-        This is where your actual tests run:
-        - Performance tests
-        - Scale tests
-        - Functional tests
-        - Integration tests
         """
         self.log("Starting test phase...")
 
-        # Example: Run functional tests
-        if not self.execute_command(
-            "echo 'Running functional tests...' && sleep 1 && echo 'All tests passed!'",
-            "Running functional tests"
-        ):
-            self.log("Functional tests failed!", "error")
+        try:
+            ret = run_on_jump_ci("test_ci")
+            self.log("Jump CI environment test completed", "success" if not ret else "error")
+            return ret
+        except Exception as e:
+            self.log(f"Test phase failed: {e}", "error")
             return 1
-
-        # Example: Run performance tests
-        if not self.execute_command(
-            "echo 'Running performance tests...' && sleep 2 && echo 'Performance metrics captured!'",
-            "Running performance tests"
-        ):
-            self.log("Performance tests failed!", "error")
-            return 1
-
-        # Example: Run scale tests (if applicable)
-        if not self.execute_command(
-            "echo 'Running scale tests...' && sleep 1 && echo 'Scale targets achieved!'",
-            "Running scale tests"
-        ):
-            self.log("Scale tests failed!", "error")
-            return 1
-
-        self.log("Test phase completed successfully!", "success")
-        return 0
 
     def cleanup(self):
         """
         Cleanup phase - Clean up resources and finalize.
-
-        This phase should clean up everything created during testing:
-        - Remove temporary resources
-        - Clean up data
-        - Reset environment
-        - Generate final reports
         """
         self.log("Starting cleanup phase...")
 
-        # Example: Clean up test data
-        self.execute_command(
-            "echo 'Cleaning up test data and temporary files'",
-            "Cleaning up test data"
-        )
-
-        # Example: Reset environment
-        self.execute_command(
-            "echo 'Resetting environment to initial state'",
-            "Resetting environment"
-        )
-
-        # Example: Generate final report
-        self.execute_command(
-            "echo 'Generating final test report'",
-            "Generating final report"
-        )
-
-        self.log("Cleanup phase completed!", "success")
-        return 0
+        try:
+            # Clean up any temporary files or connections
+            self.log("Cleaning up jump CI resources...")
+            ret = run_on_jump_ci("pre_cleanup_ci")
+            self.log("Cleanup phase completed!", "success" if not ret else "error")
+            return 0
+        except Exception as e:
+            self.log(f"Cleanup phase failed: {e}", "error")
+            return 1
 
 
 @click.group()
@@ -190,7 +133,7 @@ def cli(ctx, verbose):
 def lock_cluster(ctx):
     """Prepare phase - Lock the cluster."""
     runner = ctx.obj.runner
-    exit_code = runner.prepare()
+    exit_code = runner.lock_cluster()
     sys.exit(exit_code)
 
 @cli.command()
@@ -198,7 +141,7 @@ def lock_cluster(ctx):
 def prepare_jump_ci(ctx):
     """Prepare phase - Prepare the Jump CI remote system."""
     runner = ctx.obj.runner
-    exit_code = runner.prepare()
+    exit_code = runner.prepare_jump_ci()
     sys.exit(exit_code)
 
 @cli.command()
@@ -206,7 +149,7 @@ def prepare_jump_ci(ctx):
 def unlock_cluster(ctx):
     """Teardown phase - Unlock the ckuster."""
     runner = ctx.obj.runner
-    exit_code = runner.prepare()
+    exit_code = runner.unlock_cluster()
     sys.exit(exit_code)
 
 @cli.command()

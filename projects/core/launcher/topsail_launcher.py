@@ -21,6 +21,7 @@ import click
 import yaml
 
 CONFIG_FILE = Path(__file__).resolve().parent / 'launcher_config.yaml'
+CONFIG_EXAMPLE_FILE = Path(__file__).resolve().parent / 'launcher_config.yaml.example'
 
 class TopsailLauncher:
     """Manages TOPSAIL containerized development environment."""
@@ -44,8 +45,19 @@ class TopsailLauncher:
                 'KUBECONFIG',
                 'OPENSHIFT_BUILD_NAMESPACE',
                 'OPENSHIFT_BUILD_REFERENCE'
-            ]
+            ],
+            'custom_env_vars': {}  # Custom environment variables as key/value pairs
         }
+
+        # Copy from example if config doesn't exist
+        if not CONFIG_FILE.exists() and CONFIG_EXAMPLE_FILE.exists():
+            try:
+                import shutil
+                shutil.copy2(CONFIG_EXAMPLE_FILE, CONFIG_FILE)
+                if self.verbose:
+                    click.echo(f"📄 Copied example config from {CONFIG_EXAMPLE_FILE} to {CONFIG_FILE}")
+            except Exception as e:
+                click.echo(f"⚠️  Warning: Failed to copy example config: {e}", err=True)
 
         # Load custom config if it exists
         if CONFIG_FILE.exists():
@@ -85,6 +97,10 @@ class TopsailLauncher:
             # Fallback to default if invalid
             config['exported_env_vars'] = ['PSAP_ODS_SECRET_PATH', 'KUBECONFIG', 'OPENSHIFT_BUILD_NAMESPACE', 'OPENSHIFT_BUILD_REFERENCE']
 
+        # Ensure custom_env_vars is a dictionary
+        if not isinstance(config.get('custom_env_vars'), dict):
+            config['custom_env_vars'] = {}
+
         return config
 
     def _has_toolbox(self) -> bool:
@@ -107,7 +123,7 @@ class TopsailLauncher:
             'HOME': os.environ.get('HOME', ''),
         }
 
-        # Add configurable environment variables
+        # Add configurable environment variables (exported from current environment)
         exported_vars = self.config.get('exported_env_vars', [])
         if self.verbose:
             click.echo(f"📋 Configured environment variables to export: {exported_vars}")
@@ -120,6 +136,16 @@ class TopsailLauncher:
             else:
                 if self.verbose:
                     click.echo(f"   ⚠️  {var} not found in environment")
+
+        # Add custom environment variables (direct key/value pairs)
+        custom_vars = self.config.get('custom_env_vars', {})
+        if custom_vars and self.verbose:
+            click.echo(f"📋 Custom environment variables: {list(custom_vars.keys())}")
+
+        for var, value in custom_vars.items():
+            env[var] = str(value)  # Ensure value is string
+            if self.verbose:
+                click.echo(f"   ✅ {var}={value}")
 
         return env
 
@@ -474,15 +500,35 @@ def status(ctx):
 
 @cli.command()
 @click.option('--set', 'set_config', nargs=2, metavar='KEY VALUE', help='Set a configuration value')
+@click.option('--set-env', 'set_env', nargs=2, metavar='VAR VALUE', help='Set a custom environment variable')
+@click.option('--edit', is_flag=True, help='Edit configuration file with $EDITOR')
 @click.pass_context
-def config(ctx, set_config):
-    """Show current configuration or set a configuration value."""
+def config(ctx, set_config, set_env, edit):
+    """Show current configuration, set a configuration value, or edit the config file."""
     launcher = ctx.obj['launcher']
 
-    if set_config:
-        # Set configuration
-        key, value = set_config
+    if edit:
+        # Edit configuration file with $EDITOR
+        editor = os.environ.get('EDITOR', 'nano')  # Default to nano if EDITOR not set
 
+        # Create config file if it doesn't exist
+        if not CONFIG_FILE.exists():
+            CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+            with open(CONFIG_FILE, 'w') as f:
+                yaml.dump({}, f)
+
+        try:
+            result = subprocess.run([editor, str(CONFIG_FILE)])
+            if result.returncode == 0:
+                click.echo(f"✅ Configuration file edited successfully")
+            else:
+                click.echo(f"⚠️  Editor exited with code {result.returncode}")
+        except Exception as e:
+            click.echo(f"❌ Failed to open editor: {e}", err=True)
+            sys.exit(1)
+        return
+
+    if set_config or set_env:
         # Load existing config
         config = {}
         if CONFIG_FILE.exists():
@@ -492,14 +538,28 @@ def config(ctx, set_config):
             except Exception:
                 config = {}
 
-        # Update config
-        config[key] = value
+        # Ensure custom_env_vars exists in config
+        if 'custom_env_vars' not in config:
+            config['custom_env_vars'] = {}
+
+        if set_config:
+            # Set regular configuration
+            key, value = set_config
+            config[key] = value
+            success_msg = f"✅ Set {key} = {value}"
+
+        if set_env:
+            # Set custom environment variable
+            var, value = set_env
+            config['custom_env_vars'][var] = value
+            success_msg = f"✅ Set environment variable {var} = {value}"
 
         # Save config
         try:
+            CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
             with open(CONFIG_FILE, 'w') as f:
                 yaml.dump(config, f, indent=2, default_flow_style=False)
-            click.echo(f"✅ Set {key} = {value}")
+            click.echo(success_msg)
         except Exception as e:
             click.echo(f"❌ Failed to save config: {e}", err=True)
             sys.exit(1)
@@ -509,7 +569,15 @@ def config(ctx, set_config):
         click.echo()
 
         for key, value in launcher.config.items():
-            click.echo(f"  {key}: {value}")
+            if key == 'custom_env_vars' and isinstance(value, dict):
+                click.echo(f"  {key}:")
+                if value:
+                    for env_var, env_value in value.items():
+                        click.echo(f"    {env_var}: {env_value}")
+                else:
+                    click.echo(f"    (none)")
+            else:
+                click.echo(f"  {key}: {value}")
 
         click.echo()
         click.echo(f"🔧 Toolbox available: {'✅ Yes' if launcher._has_toolbox() else '❌ No (using podman)'}")
@@ -520,6 +588,12 @@ def config(ctx, set_config):
             click.echo(f"📁 TOPSAIL_HOME: ✅ Found at {topsail_home}")
         else:
             click.echo(f"📁 TOPSAIL_HOME: ❌ Not found at {topsail_home}")
+
+        click.echo()
+        click.echo("💡 Usage examples:")
+        click.echo("   config --set topsail_home /path/to/topsail")
+        click.echo("   config --set-env CUSTOM_VAR custom_value")
+        click.echo("   config --edit")
 
 
 

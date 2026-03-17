@@ -7,7 +7,7 @@ import time
 import subprocess
 import yaml
 
-from projects.core.library import env, config, run, configure_logging
+from projects.legacy.library import env, config, run, configure_logging
 
 from projects.jump_ci.testing import utils
 
@@ -142,7 +142,7 @@ def open_tunnel(
     if verbose:
         logging.info(cmd)
 
-    RETRIES = 150
+    RETRIES = 1
     DELAY = 5
     recreate_count_down = RECREATED_TUNNEL_COUNT_DOWN = 5 # recreate the SSH tunnel every 5 attempts
 

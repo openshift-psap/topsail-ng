@@ -19,8 +19,14 @@ import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, List
+from enum import StrEnum
 
 IS_LIGHTWEIGHT_IMAGE = os.environ.get("TOPSAIL_LIGHT_IMAGE")
+
+class FinishReason(StrEnum):
+    SUCCESS = "success"
+    ERROR = "error"
+    OTHER = "other"
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -38,15 +44,45 @@ except ImportError as e:
     logger.warning(f"GitHub PR arguments parser not available: {e}")
     parse_pr_arguments = None
 
+def load_notification_module():
+    # Import notifications module
+    try:
+        # Add the notifications directory to Python path
+        notifications_dir = Path(__file__).parent.parent / "notifications"
+        if str(notifications_dir) not in sys.path:
+            sys.path.insert(0, str(notifications_dir))
 
-# Dual output
+        import projects.core.notifications.send as send
+        logger.info("Notifications module imported successfully")
+        return send.send_job_completion_notification
+    except ImportError as e:
+        logger.exception(f"Notifications module not available: {e}")
+        return None
+
+# Dual output global state
+_dual_output_state = None
+
+class DualOutputState:
+    """Manages dual output (console + file) state for proper cleanup."""
+    def __init__(self, daemon_thread, original_stdout_fd, original_stderr_fd, write_fd, stop_event):
+        self.daemon_thread = daemon_thread
+        self.original_stdout_fd = original_stdout_fd
+        self.original_stderr_fd = original_stderr_fd
+        self.write_fd = write_fd
+        self.stop_event = stop_event
+
 def setup_dual_output():
     """
     Set up stdout/stderr to write to both console and log file.
 
     If ARTIFACT_DIR is set, all output will go to both console and $ARTIFACT_DIR/run.log
     This is permanent for the rest of the program execution.
+
+    Returns:
+        DualOutputState object for cleanup, or None if setup failed
     """
+    global _dual_output_state
+
     artifact_dir = os.environ.get('ARTIFACT_DIR')
 
     if not artifact_dir:
@@ -67,8 +103,9 @@ def setup_dual_output():
             f.write("| New CI run |\n")
             f.write("--------------\n")
 
-    # 1. Save the original terminal stdout so we can still write to it
+    # 1. Save the original terminal stdout/stderr so we can restore them
     original_stdout_fd = os.dup(sys.stdout.fileno())
+    original_stderr_fd = os.dup(sys.stderr.fileno())
 
     # 2. Create a pipe: (read_fd, write_fd)
     read_fd, write_fd = os.pipe()
@@ -77,19 +114,72 @@ def setup_dual_output():
     os.dup2(write_fd, sys.stdout.fileno())
     os.dup2(write_fd, sys.stderr.fileno())
 
+    # Create stop event for clean thread shutdown
+    stop_event = threading.Event()
+
     def communicate():
+        import select
         with open(log_file_path, "a") as log_file, os.fdopen(original_stdout_fd, "w") as terminal:
-            # Open the read-end of the pipe
-            with os.fdopen(read_fd, "r") as pipe_in:
-                for line in pipe_in:
-                    terminal.write(line) # Send to console
-                    log_file.write(line) # Send to file
-                    terminal.flush()
-                    log_file.flush()
+            try:
+                while not stop_event.is_set():
+                    # Use select to check if data is available with timeout
+                    ready, _, _ = select.select([read_fd], [], [], 0.5)
+                    if ready:
+                        # Data available, read a line
+                        try:
+                            line = os.read(read_fd, 4096).decode('utf-8', errors='replace')
+                            if not line:  # EOF
+                                break
+                            terminal.write(line)
+                            log_file.write(line)
+                            terminal.flush()
+                            log_file.flush()
+                        except (OSError, ValueError) as e:
+                            # Pipe was closed, exit gracefully
+                            logging.exception(f"Dual output thread file operations failed: {e}")
+                            break
+                    # If no data, loop continues and checks stop_event
+            except Exception as e:
+                logging.exception(f"Dual output thread failed: {e}")
+                pass  # Exit gracefully on any error
 
     # 4. Start a background thread to act as the 'tee' process
-    daemon = threading.Thread(target=communicate, daemon=True)
+    daemon = threading.Thread(target=communicate, daemon=False)  # Not daemon so we can join it
     daemon.start()
+
+    # Store state for cleanup
+    _dual_output_state = DualOutputState(daemon, original_stdout_fd, original_stderr_fd, write_fd, stop_event)
+    return _dual_output_state
+
+
+def shutdown_dual_output():
+    """
+    Shutdown dual output system and flush all buffers.
+    """
+    global _dual_output_state
+
+    if not _dual_output_state:
+        return
+
+    try:
+        # Flush any pending output
+        sys.stdout.flush()
+        sys.stderr.flush()
+
+        # Signal the daemon thread to stop
+        _dual_output_state.stop_event.set()
+
+        # Wait for daemon thread to finish processing (so files get flushed)
+        _dual_output_state.daemon_thread.join(timeout=3.0)
+
+        if _dual_output_state.daemon_thread.is_alive():
+            print("Warning: Dual output daemon thread did not finish in time")
+
+    except Exception as e:
+        print(f"Warning: Error during dual output shutdown: {e}")
+
+    # Clear state
+    _dual_output_state = None
 
 # PR arguments
 def parse_and_save_pr_arguments() -> Optional[Path]:
@@ -242,8 +332,8 @@ def system_prechecks() -> bool:
 
     # Check for existing failures
     failures_file = artifact_path / "FAILURES"
-    if failures_file.exists():
-        raise ValueError(f"File '{failures_file}' already exists, cannot continue.")
+    if failures_file.exists() and not os.environ.get("TOPSAIL_IGNORE_FAILURES_FILE"):
+        raise ValueError(f"File '{failures_file}' already exists, cannot continue. Set TOPSAIL_IGNORE_FAILURES_FILE=1 to ignore this.")
 
     # Handle OpenShift CI PR arguments (already handled by parse_and_save_pr_arguments)
     if (os.environ.get('OPENSHIFT_CI') == 'true' and
@@ -405,8 +495,43 @@ def format_duration(duration_seconds: int) -> str:
     seconds = duration_seconds % 60
     return f"after {hours:02d} hours {minutes:02d} minutes {seconds:02d} seconds"
 
+def send_notification(project: str, operation: str, finish_reason: FinishReason, duration: str):
+    send_job_completion_notification = load_notification_module()
+    if not send_job_completion_notification:
+        logger.info("Notifications module not available, skipping notification sending")
+        return
+    try:
+        # Determine notification parameters
+        success = finish_reason == FinishReason.SUCCESS
+        notification_status = f"Test of '{project} {operation}' {('succeeded' if success else 'failed')}{duration}"
 
-def postchecks(project: str, operation: str, start_time: Optional[float], success: str) -> str:
+        # Enable GitHub notifications by default, Slack can be enabled via environment variable
+        github_notifications = True
+        slack_notifications = True
+
+        # Check for dry run mode
+        dry_run = os.environ.get('TOPSAIL_NOTIFICATION_DRY_RUN', 'false').lower() == 'true'
+
+        logger.info(f"Sending notifications - finish_reason: {finish_reason} | GitHub: {github_notifications}, Slack: {slack_notifications}, dry_run: {dry_run}")
+
+        # Send the notification
+        notification_failed = send_job_completion_notification(
+            finish_reason=finish_reason,
+            status=notification_status,
+            github=github_notifications,
+            slack=slack_notifications,
+            dry_run=dry_run
+        )
+        if notification_failed:
+            logger.warning("Some notifications failed to send")
+        else:
+            logger.info("Notifications sent successfully")
+
+    except Exception as e:
+        logger.exception(f"Failed to send notifications")
+        # Don't fail the entire job if notifications fail
+
+def postchecks(project: str, operation: str, start_time: Optional[float], finish_reason: FinishReason) -> str:
     """
     Post-execution checks and status reporting.
 
@@ -423,13 +548,14 @@ def postchecks(project: str, operation: str, start_time: Optional[float], succes
 
     if not artifact_dir:
         # No artifact dir, just return simple status
-        return f"✅ {project} {operation} completed successfully" if success \
-            else f"❌ {project} {operation} failed"
+        return f"✅ {project} {operation} completed successfully" \
+            if finish_reason == FinishReason.SUCCESS \
+               else f"❌ {project} {operation} failed"
 
     artifact_path = Path(artifact_dir)
-    if success:
+    if finish_reason == FinishReason.SUCCESS:
         pass
-    elif not success:
+    elif finish_reason == FinishReason.ERROR:
         # Find all FAILURE files and consolidate them
         failure_files = list(artifact_path.glob("**/FAILURE"))
         failures_file = artifact_path / "FAILURES"
@@ -445,7 +571,7 @@ def postchecks(project: str, operation: str, start_time: Optional[float], succes
 
     else:
         # placeholder for future exist status (eg, performance regression, flake, ...)
-        logger.warning(f"postchecks: unhandled exit reason: {reason}")
+        logger.warning(f"postchecks: unhandled finish reason: {finish_reason}")
 
     # Normal exit handling
     duration_str = ""
@@ -458,7 +584,7 @@ def postchecks(project: str, operation: str, start_time: Optional[float], succes
 
     # Check if there were failures
     failures_file = artifact_path / "FAILURES"
-    if not success or (failures_file.exists() and failures_file.stat().st_size > 0):
+    if finish_reason != FinishReason.SUCCESS or (failures_file.exists() and failures_file.stat().st_size > 0):
         status = f"❌ Test of '{project} {operation}' failed{duration_str}."
     else:
         status = f"✅ Test of '{project} {operation}' succeeded{duration_str}."
@@ -467,5 +593,12 @@ def postchecks(project: str, operation: str, start_time: Optional[float], succes
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     finished_content = f"{timestamp} {status}"
     (artifact_path / "FINISHED").write_text(finished_content + "\n")
+
+
+    # Send notifications for job completion
+    send_notification(project, operation, finish_reason, duration_str)
+
+    # Properly shutdown dual output to flush all buffers and terminate daemon
+    shutdown_dual_output()
 
     return status

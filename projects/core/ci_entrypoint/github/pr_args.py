@@ -20,10 +20,6 @@ import urllib.error
 
 REQUIRED_AUTHOR_ASSOCIATION = 'CONTRIBUTOR'
 
-MANDATORY_KEYS = {
-    "ci_job.name": "/test",
-}
-
 def setup_logging():
     """Set up logging configuration."""
     logging.basicConfig(
@@ -66,25 +62,41 @@ def handle_test_directive(line: str) -> Dict[str, Any]:
     # Extract test name and arguments
     parts = line[6:].strip().split()
     if not parts:
-        logging.error("Found an empty /test directive")
-        return {}
+        raise ValueError("Found an empty /test directive")
 
     test_name = parts.pop(0)
 
     if not parts:
-        logging.warning(f"Found a /test directive without a project ('{line.strip()}')")
-        return {}
+        raise ValueError(f"Found a /test directive without a project ('{line.strip()}')")
 
     project_name = parts.pop(0)
 
     args = parts # allowed to be empty
+    result = {}
+    # Special handling for jump CI - extract cluster and target project info
+    if test_name == 'jump-ci':
+        if len(args) <= 2:
+            raise ValueError("The JumpCI project expects 3+ parameters in the /test jump-ci CLUSTER PROJECT ARGS*")
 
-    # Build result with test info and PR positional arguments
-    result = {
-        'ci_job.name': test_name,
-        'ci_job.project': project_name,
-        'ci_job.args': args,
-    }
+        # Format: /test jump-ci cluster target_project [additional_args...]
+        cluster = project_name
+        target_project = args.pop(0)
+        remaining_args = args
+
+        result.update({
+            'cluster.name': cluster,
+            'project.name': target_project,
+            'project.args': remaining_args,
+        })
+
+        logging.info(f"Jump CI configuration: cluster={cluster}, target_project={target_project}, args={remaining_args}")
+    else:
+        # Build result with test info and PR positional arguments
+        result.update({
+            'ci_job.name': test_name,
+            'ci_job.project': project_name,
+            'ci_job.args': args,
+        })
 
     return result
 
@@ -246,9 +258,11 @@ def get_supported_directives() -> Dict[str, str]:
 
         '/test': '''Execute a test command with optional arguments.
                     Format: /test test_name project_name [arg1] [arg2] ...
-                    Example: /test jump-ci llm-d
-                             /test jump-ci skeleton arg1 arg2
+                    Example: /test jump-ci cluster target_project
+                             /test llm-d skeleton arg1 arg2
                     Effect: Extracts ci_job.{name,project,args}.
+                    Special: For jump-ci, format is /test jump-ci cluster target_project [args]
+                             which also sets jump_ci.{cluster,project,args} for remote execution.
                     Note: This is the primary directive for triggering CI test runs.''',
     }
 
@@ -272,6 +286,7 @@ def parse_directives(text: str) -> Dict[str, Any]:
     config = {}
     directive_handlers = get_directive_handlers()
 
+    has_test = False
     # Process each line for directives
     for line in text.split('\n'):
         line = line.strip()
@@ -279,6 +294,9 @@ def parse_directives(text: str) -> Dict[str, Any]:
         # Skip empty lines and non-directive lines
         if not line or not line.startswith('/'):
             continue
+
+        if line.startswith("/test"):
+            has_test = True
 
         # Find matching directive handler
         handler = None
@@ -297,6 +315,9 @@ def parse_directives(text: str) -> Dict[str, Any]:
         else:
             # Unknown directive - log warning
             logging.warning(f"Unknown directive ignored: {line}")
+
+    if not has_test:
+        raise ValueError("/test directive not found in the PR last comment")
 
     return config
 
@@ -432,11 +453,6 @@ def parse_pr_arguments(
 
     # Parse directives using the modular parser
     config = parse_directives(combined_text)
-
-    # Validate that mandatory keys were set (meaning required directives were found and processed)
-    for key, directive in MANDATORY_KEYS.items():
-        if key in config: continue
-        raise ValueError(f"Directive {directive} could not be parsed. Field '{key}' missing.")
 
     return config
 

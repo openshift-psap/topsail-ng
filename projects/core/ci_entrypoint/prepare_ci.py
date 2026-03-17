@@ -38,6 +38,20 @@ except ImportError as e:
     logger.warning(f"GitHub PR arguments parser not available: {e}")
     parse_pr_arguments = None
 
+# Import notifications module
+try:
+    # Add the notifications directory to Python path
+    notifications_dir = Path(__file__).parent.parent / "notifications"
+    if str(notifications_dir) not in sys.path:
+        sys.path.insert(0, str(notifications_dir))
+
+    from send import send_job_completion_notification
+    logger.info("Notifications module imported successfully")
+    NOTIFICATIONS_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"Notifications module not available: {e}")
+    NOTIFICATIONS_AVAILABLE = False
+
 
 # Dual output
 def setup_dual_output():
@@ -242,8 +256,8 @@ def system_prechecks() -> bool:
 
     # Check for existing failures
     failures_file = artifact_path / "FAILURES"
-    if failures_file.exists():
-        raise ValueError(f"File '{failures_file}' already exists, cannot continue.")
+    if failures_file.exists() and not os.environ.get("TOPSAIL_IGNORE_FAILURES_FILE"):
+        raise ValueError(f"File '{failures_file}' already exists, cannot continue. Set TOPSAIL_IGNORE_FAILURES_FILE=1 to ignore this.")
 
     # Handle OpenShift CI PR arguments (already handled by parse_and_save_pr_arguments)
     if (os.environ.get('OPENSHIFT_CI') == 'true' and
@@ -405,6 +419,41 @@ def format_duration(duration_seconds: int) -> str:
     seconds = duration_seconds % 60
     return f"after {hours:02d} hours {minutes:02d} minutes {seconds:02d} seconds"
 
+def send_notification(project: str, operation: str, success: str, duration: str):
+    if not NOTIFICATIONS_AVAILABLE:
+        logger.info("Notifications module not available, skipping notification sending")
+        return
+
+    try:
+        # Determine notification parameters
+        notification_status = f"Test of '{project} {operation}' {('succeeded' if success else 'failed')}{duration}"
+
+        # Enable GitHub notifications by default, Slack can be enabled via environment variable
+        github_notifications = True
+        slack_notifications = True
+
+        # Check for dry run mode
+        dry_run = os.environ.get('TOPSAIL_NOTIFICATION_DRY_RUN', 'false').lower() == 'true'
+
+        logger.info(f"Sending notifications - success: {success}, GitHub: {github_notifications}, Slack: {slack_notifications}, dry_run: {dry_run}")
+
+        # Send the notification
+        notification_failed = send_job_completion_notification(
+            success=success,
+            status=notification_status,
+            github=github_notifications,
+            slack=slack_notifications,
+            dry_run=dry_run
+        )
+
+        if notification_failed:
+            logger.warning("Some notifications failed to send")
+        else:
+            logger.info("Notifications sent successfully")
+
+    except Exception as e:
+        logger.error(f"Failed to send notifications: {e}")
+        # Don't fail the entire job if notifications fail
 
 def postchecks(project: str, operation: str, start_time: Optional[float], success: str) -> str:
     """
@@ -467,5 +516,8 @@ def postchecks(project: str, operation: str, start_time: Optional[float], succes
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     finished_content = f"{timestamp} {status}"
     (artifact_path / "FINISHED").write_text(finished_content + "\n")
+
+    # Send notifications for job completion
+    send_notification(project, operation, success, duration_str)
 
     return status

@@ -64,11 +64,12 @@ _dual_output_state = None
 
 class DualOutputState:
     """Manages dual output (console + file) state for proper cleanup."""
-    def __init__(self, daemon_thread, original_stdout_fd, original_stderr_fd, write_fd):
+    def __init__(self, daemon_thread, original_stdout_fd, original_stderr_fd, write_fd, stop_event):
         self.daemon_thread = daemon_thread
         self.original_stdout_fd = original_stdout_fd
         self.original_stderr_fd = original_stderr_fd
         self.write_fd = write_fd
+        self.stop_event = stop_event
 
 def setup_dual_output():
     """
@@ -113,33 +114,47 @@ def setup_dual_output():
     os.dup2(write_fd, sys.stdout.fileno())
     os.dup2(write_fd, sys.stderr.fileno())
 
+    # Create stop event for clean thread shutdown
+    stop_event = threading.Event()
+
     def communicate():
+        import select
         with open(log_file_path, "a") as log_file, os.fdopen(original_stdout_fd, "w") as terminal:
-            # Open the read-end of the pipe
-            with os.fdopen(read_fd, "r") as pipe_in:
-                try:
-                    for line in pipe_in:
-                        terminal.write(line) # Send to console
-                        log_file.write(line) # Send to file
-                        terminal.flush()
-                        log_file.flush()
-                except (OSError, ValueError):
-                    # Pipe was closed, exit gracefully
-                    pass
+            try:
+                while not stop_event.is_set():
+                    # Use select to check if data is available with timeout
+                    ready, _, _ = select.select([read_fd], [], [], 0.5)
+                    if ready:
+                        # Data available, read a line
+                        try:
+                            line = os.read(read_fd, 4096).decode('utf-8', errors='replace')
+                            if not line:  # EOF
+                                break
+                            terminal.write(line)
+                            log_file.write(line)
+                            terminal.flush()
+                            log_file.flush()
+                        except (OSError, ValueError) as e:
+                            # Pipe was closed, exit gracefully
+                            logging.exception(f"Dual output thread file operations failed: {e}")
+                            break
+                    # If no data, loop continues and checks stop_event
+            except Exception as e:
+                logging.exception(f"Dual output thread failed: {e}")
+                pass  # Exit gracefully on any error
 
     # 4. Start a background thread to act as the 'tee' process
     daemon = threading.Thread(target=communicate, daemon=False)  # Not daemon so we can join it
     daemon.start()
 
     # Store state for cleanup
-    _dual_output_state = DualOutputState(daemon, original_stdout_fd, original_stderr_fd, write_fd)
+    _dual_output_state = DualOutputState(daemon, original_stdout_fd, original_stderr_fd, write_fd, stop_event)
     return _dual_output_state
 
 
 def shutdown_dual_output():
     """
     Shutdown dual output system and flush all buffers.
-    Just ensure files are flushed, don't mess with file descriptors.
     """
     global _dual_output_state
 
@@ -151,8 +166,8 @@ def shutdown_dual_output():
         sys.stdout.flush()
         sys.stderr.flush()
 
-        # Close the write end of the pipe to signal the daemon to stop
-        os.close(_dual_output_state.write_fd)
+        # Signal the daemon thread to stop
+        _dual_output_state.stop_event.set()
 
         # Wait for daemon thread to finish processing (so files get flushed)
         _dual_output_state.daemon_thread.join(timeout=3.0)
@@ -163,7 +178,7 @@ def shutdown_dual_output():
     except Exception as e:
         print(f"Warning: Error during dual output shutdown: {e}")
 
-    # Clear state but don't try to restore file descriptors
+    # Clear state
     _dual_output_state = None
 
 # PR arguments

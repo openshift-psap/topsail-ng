@@ -548,7 +548,7 @@ def send_notification(project: str, operation: str, finish_reason: FinishReason,
         logger.exception(f"Failed to send notifications")
         # Don't fail the entire job if notifications fail
 
-def postchecks(project: str, operation: str, start_time: Optional[float], finish_reason: FinishReason) -> str:
+def postchecks(project: str, operation: str, start_time: Optional[float], finish_reason: FinishReason, args: Optional[List[str]] = None) -> str:
     """
     Post-execution checks and status reporting.
 
@@ -613,7 +613,9 @@ def postchecks(project: str, operation: str, start_time: Optional[float], finish
 
 
     # Send notifications for job completion
-    send_notification(project, operation, finish_reason, duration_str)
+    # Get the actual step from args (like "test", "lock_cluster", "prepare")
+    actual_step = args[0] if args and len(args) > 0 else operation
+    send_notification(project, actual_step, finish_reason, duration_str)
 
     # Properly shutdown dual output to flush all buffers and terminate daemon
     shutdown_dual_output()

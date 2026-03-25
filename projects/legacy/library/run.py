@@ -5,12 +5,15 @@ logging.getLogger().setLevel(logging.INFO)
 import json
 import signal
 import itertools
+import pathlib
 
 import subprocess
 
 import joblib
 
 from . import env, config
+
+TOPSAIL_HOME = pathlib.Path(__file__).resolve().parent.parent.parent.parent
 
 # create new process group, become its leader, except if we're already pid 1 (defacto group leader, setpgrp gets permission denied error)
 try:
@@ -41,6 +44,8 @@ def run_toolbox_from_config(group, command, prefix=None, suffix=None, show_args=
     if run_kwargs is None:
         run_kwargs = {}
 
+    run_kwargs["cwd"] = str(TOPSAIL_HOME)
+
     kwargs = dict()
     if prefix is not None:
         kwargs["prefix"] = prefix
@@ -63,7 +68,7 @@ def run_toolbox_from_config(group, command, prefix=None, suffix=None, show_args=
 
     cmd_env = " ".join(env_vals)
 
-    return run(f'{cmd_env} ./run_toolbox.py from_config {group} {command} {_dict_to_run_toolbox_args(kwargs)}', **run_kwargs)
+    return run(f'{cmd_env} bin/run_toolbox.py from_config {group} {command} {_dict_to_run_toolbox_args(kwargs)}', **run_kwargs)
 
 
 def _dict_to_run_toolbox_args(args_dict):
@@ -99,7 +104,9 @@ def run_toolbox(group, command, artifact_dir_suffix=None, run_kwargs=None, mute_
 
     cmd_env = " ".join(env_vals)
 
-    return run(f'{cmd_env} ./run_toolbox.py {group} {command} {_dict_to_run_toolbox_args(kwargs)}', **run_kwargs)
+    run_kwargs["cwd"] = str(TOPSAIL_HOME)
+
+    return run(f'{cmd_env} bin/run_toolbox.py {group} {command} {_dict_to_run_toolbox_args(kwargs)}', **run_kwargs)
 
 
 def run(command, capture_stdout=False, capture_stderr=False, check=True, protect_shell=True, cwd=None, stdin_file=None, log_command=True, decode_stdout=True, decode_stderr=True):

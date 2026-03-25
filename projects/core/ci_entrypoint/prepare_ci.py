@@ -228,7 +228,7 @@ def parse_and_save_pr_arguments() -> Optional[Path]:
 
     try:
         # Parse PR arguments
-        config = parse_pr_arguments(
+        config, found_directives = parse_pr_arguments(
             repo_owner=repo_owner,
             repo_name=repo_name,
             pull_number=pull_number,
@@ -246,6 +246,23 @@ def parse_and_save_pr_arguments() -> Optional[Path]:
 
         logger.info(f"Saved PR arguments to {output_file}")
         logger.info(f"Configuration contains {len(config)} override(s)")
+
+        # Save directives to text file
+        pr_config_file = artifact_path / "pr_config.txt"
+        with open(pr_config_file, 'w') as f:
+            f.write(f"# GitHub PR Directives Found\n")
+            f.write(f"# Repository: {repo_owner}/{repo_name}#{pull_number}\n")
+            f.write(f"# Test: {test_name}\n")
+            f.write(f"# Generated at: {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}\n\n")
+
+            if found_directives:
+                for directive in found_directives:
+                    f.write(f"{directive}\n")
+            else:
+                f.write("# No directives found\n")
+
+        logger.info(f"Saved PR directives to {pr_config_file}")
+        logger.info(f"Found {len(found_directives)} directive(s)")
 
         return output_file
 

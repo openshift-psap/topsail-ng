@@ -230,7 +230,7 @@ class RunAnsibleRole:
         self.ansible_vars["collections_paths"] = env["ANSIBLE_COLLECTIONS_PATHS"]
 
         if env.get("ANSIBLE_CONFIG") is None:
-            env["ANSIBLE_CONFIG"] = str(TOPSAIL_DIR / "ansible-config" / "ansible.cfg")
+            env["ANSIBLE_CONFIG"] = str(TOPSAIL_DIR / "projects/legacy/ansible-config" / "ansible.cfg")
 
         print(f"Using '{env['ANSIBLE_CONFIG']}' as ansible configuration file.")
 
@@ -342,7 +342,7 @@ class RunAnsibleRole:
 
 
         if remote_hostname:
-            cmd += ["--inventory-file", f"/proc/{os.getpid()}/fd/{inventory_fd}"]
+            cmd += ["--inventory", f"/proc/{os.getpid()}/fd/{inventory_fd}"]
 
         sys.stdout.flush()
         sys.stderr.flush()

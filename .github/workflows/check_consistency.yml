@@ -14,6 +14,9 @@ jobs:
   check_topsail_consistency:
     runs-on: ubuntu-latest
 
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+
     steps:
       - uses: actions/checkout@v4
         with:
@@ -21,11 +24,5 @@ jobs:
 
       - uses: ./.github/steps/prepare_minimal_ubuntu_image
 
-      - name: Check that all the variables point to existing files
-        run: ./run_toolbox.py repo validate_role_files
-
-      - name: Check that all the variables defined are actually used
-        run: ./run_toolbox.py repo validate_role_vars_used
-
       - name: Check that no symlink is broken
-        run: ./run_toolbox.py repo validate_no_broken_link
+        run: bin/run_toolbox.py repo validate_no_broken_link

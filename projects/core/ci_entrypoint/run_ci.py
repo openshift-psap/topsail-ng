@@ -420,7 +420,10 @@ def execute_project_operation(project: str, operation: str, args: tuple, verbose
         result = subprocess.run(
             cmd,
             cwd=project_dir,
-            check=False  # Don't raise exception on non-zero exit
+            check=False,  # Don't raise exception on non-zero exit
+            stdin=None,   # Inherit stdin for pdb/debugging
+            stdout=None,  # Inherit stdout for pdb/debugging
+            stderr=None   # Inherit stderr for pdb/debugging
         )
         click.echo(f"▶️  Executing {project} {operation} {' '.join(args)} --> {result.returncode}")
 

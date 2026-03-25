@@ -140,7 +140,7 @@ def jump_ci(command):
             if not project:
                 project = config.project.get_config(f"overrides.PR_POSITIONAL_ARG_{1+nb_args_to_eat}", None)
                 if not project:
-                    raise ValueError(f"Expected to find the projec name in project.name or overrides.PR_POSITIONAL_ARG_{1+nb_args_to_eat}, but both of them were empty :/")
+                    raise ValueError(f"Expected to find the project name in project.name or overrides.PR_POSITIONAL_ARG_{1+nb_args_to_eat}, but both of them were empty :/")
                 nb_args_to_eat += 1
 
 

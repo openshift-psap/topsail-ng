@@ -300,21 +300,27 @@ def ci_banner(project: str, operation: str, args: List[str]):
     if not pull_sha:
         logger.warning(f"PULL_PULL_SHA not set. Showing the last commits from main.")
 
+    logger.info(f"Git command will be: git show --quiet --oneline {base_sha}..{pull_sha}")
+
     try:
         result = subprocess.run(
-            ["git", "show", "--quiet", "--oneline", f"{base_sha}..{pull_sha}"],
+            ["git", "show", "--quiet", "--oneline", f"{base_sha}"],
             capture_output=True,
             text=True,
             timeout=10
         )
+        logger.info(f"Git command returncode: {result.returncode}")
+        logger.info(f"Git stdout: {result.stdout}")
+        logger.info(f"Git stderr: {result.stderr}")
+
         if result.returncode == 0:
             lines = result.stdout.split('\n')[:10]  # head 10
             for line in lines:
                 logging.info(line)
         else:
             logger.warning("Could not access git history (main..) ...")
-    except Exception:
-        logger.warning("Could not access git history...")
+    except Exception as e:
+        logger.warning(f"Could not access git history: {e}")
 
 
 def system_prechecks() -> bool:
@@ -456,6 +462,12 @@ def prepare(verbose: bool = False, project: str = "", operation: str = "", args:
         args = []
 
     logger.info("Starting CI preparation")
+
+    if topsail_home := os.environ.get("TOPSAIL_HOME"):
+        logger.info(f"Switching to TOPSAIL_HOME={topsail_home} ...")
+        os.chdir(topsail_home)
+    elif os.environ.get("TOPSAIL_LIGHT_IMAGE"):
+        os.chdir("/app")
 
     try:
         # Set up ARTIFACT_DIR

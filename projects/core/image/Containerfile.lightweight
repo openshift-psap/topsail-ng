@@ -18,21 +18,14 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 # Set up the runner user
 ENV USER_NAME=psap-ci-runner \
     USER=psap-ci-runner \
-    HOME=/app \
-    INSIDE_CI_IMAGE="y" \
+    HOME=/app/topsail \
     TOPSAIL_LIGHT_IMAGE="true"
 
 ENV PYTHONPATH=$HOME
 
-WORKDIR /app
+WORKDIR /app/topsail
 
 RUN git clone https://github.com/openshift-psap/topsail-ng/ $HOME
-
-RUN echo -e '#!/usr/bin/env bash \n\
-      cd /app  \n\
-      exec /app/bin/run "$@" \n\
-    ' > /usr/local/bin/run_ci \
-    && chmod ugo+x /usr/local/bin/run_ci
 
 RUN chgrp -R 0 "$HOME" && chmod -R g=u "$HOME"
 
@@ -41,6 +34,11 @@ RUN chgrp -R 0 "$HOME" && chmod -R g=u "$HOME"
 # Optimize uv for container environments
 ENV UV_COMPILE_BYTECODE=1
 ENV UV_SYSTEM_PYTHON=1
+
+# Set environment variables
+ENV PYTHONPATH=/app/topsail \
+    PYTHONUNBUFFERED=1 \
+    TOPSAIL_HOME=/app/topsail
 
 RUN cp projects/core/image/pyproject-lightweight.toml pyproject.toml
 RUN uv lock

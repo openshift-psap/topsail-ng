@@ -267,8 +267,8 @@ def parse_and_save_pr_arguments() -> Optional[Path]:
         return output_file
 
     except Exception as e:
-        logger.error(f"Failed to parse PR arguments: {e}")
-        return None
+        logger.exception(f"Failed to parse PR arguments: {e}")
+        raise
 
 
 def precheck_artifact_dir() -> bool:

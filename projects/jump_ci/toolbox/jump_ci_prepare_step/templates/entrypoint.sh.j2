@@ -53,7 +53,9 @@ podman run \
   --volume {{ cluster_lock_dir }}/secrets/{{ jump_ci_prepare_step_secrets_path_env_key }}:/run/secrets/{{ jump_ci_prepare_step_secrets_path_env_key }}:ro \
   --env {{ jump_ci_prepare_step_secrets_path_env_key }}="/run/secrets/{{ jump_ci_prepare_step_secrets_path_env_key }}" \
   \
+{%- if cluster_kubeconfig is defined -%}
   --volume {{ cluster_kubeconfig }}:/run/secrets/kubeconfig:ro \
+{%- endif -%}
   --env KUBECONFIG="/run/secrets/kubeconfig" \
   \
   --volume {{ step_artifact_dir }}/test_env:/run/secrets/test_env:ro \

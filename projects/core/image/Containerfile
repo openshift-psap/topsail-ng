@@ -24,6 +24,8 @@ RUN dnf install -y \
     jq \
     which \
     procps-ng \
+    file \
+    rsync \
     && dnf clean all
 
 # Install uv for fast Python package management

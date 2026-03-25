@@ -74,22 +74,16 @@ def handle_test_directive(line: str) -> Dict[str, Any]:
     args = parts # allowed to be empty
     result = {}
     # Special handling for jump CI - extract cluster and target project info
-    if test_name == 'jump-ci':
-        if len(args) <= 2:
-            raise ValueError("The JumpCI project expects 3+ parameters in the /test jump-ci CLUSTER PROJECT ARGS*")
-
-        # Format: /test jump-ci cluster target_project [additional_args...]
-        cluster = project_name
-        target_project = args.pop(0)
-        remaining_args = args
+    if test_name.endswith('jump-ci'):
+        # Format: /test jump-ci target_project [additional_args...]
+        target_project = project_name
 
         result.update({
-            'cluster.name': cluster,
             'project.name': target_project,
-            'project.args': remaining_args,
+            'project.args': args,
         })
 
-        logging.info(f"Jump CI configuration: cluster={cluster}, target_project={target_project}, args={remaining_args}")
+        logging.info(f"Jump CI configuration: target_project={target_project}, args={args}")
     else:
         # Build result with test info and PR positional arguments
         result.update({

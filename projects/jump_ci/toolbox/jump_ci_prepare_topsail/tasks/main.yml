@@ -66,14 +66,14 @@
 
 - name: Save git ref
   set_fact:
-    git_ref: "\
+    git_ref: >-
       {% if jump_ci_prepare_topsail_git_ref -%}
          {{ jump_ci_prepare_topsail_git_ref }}
-      {%- elif jump_ci_prepare_topsail_pr_number -%}
+      {%- elif jump_ci_prepare_topsail_pr_number is defined and (jump_ci_prepare_topsail_pr_number | string) != "" -%}
         refs/pull/{{ jump_ci_prepare_topsail_pr_number }}/merge
       {%- else -%}
         main
-      {%- endif -%}" # noqa: jinja[spacing]
+      {%- endif -%}
 
 - name: Fetch TOPSAIL repository
   block:
@@ -81,13 +81,13 @@
     command: |
       {{ git }} fetch --quiet origin {{ git_ref }}
 
-    when: jump_ci_prepare_topsail_pr_number
+    when: jump_ci_prepare_topsail_pr_number is defined and (jump_ci_prepare_topsail_pr_number | string) != ""
 
   - name: Switch to TOPSAIL's branch
     command: |
       {{ git }} reset --hard FETCH_HEAD
 
-    when: jump_ci_prepare_topsail_pr_number
+    when: jump_ci_prepare_topsail_pr_number is defined and (jump_ci_prepare_topsail_pr_number | string) != ""
 
   - name: Fetch the submodules
     command: |

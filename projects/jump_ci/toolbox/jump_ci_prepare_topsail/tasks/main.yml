@@ -49,7 +49,12 @@
 
 - name: Set TOPSAIL's directory
   set_fact:
-    topsail_home: "{{ cluster_lock_dir }}/topsail"
+    topsail_home: "{{ cluster_lock_dir }}/topsail-ng"
+
+- name: Ensure that the src directory exists
+  ansible.builtin.file:
+    state: absent
+    path: "{{ topsail_home }}"
 
 - name: Set git command
   set_fact:
@@ -128,7 +133,7 @@
     set -o pipefail;
     podman image ls
        --filter until=4h
-       --filter label=name=topsail
+       --filter label=name=topsail-ng
        --format json
        | jq -r '.[] | select(.Containers == 0) | select(.Labels.preserve != "true") | .Id'
   register: podman_images_to_delete_cmd
@@ -177,7 +182,7 @@
 - name: "Build image from scatch {{ image_full_name }}"
   shell:
     time podman build --squash
-      --label jump-ci=true
+      --label topsail-ng=true
       --tag "{{ image_full_name }}"
       --file "{{ jump_ci_prepare_topsail_dockerfile_name }}"
       "{{ topsail_home }}" > "{{ artifact_extra_logs_dir }}/artifacts/image.log"

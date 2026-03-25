@@ -39,15 +39,17 @@ trap cleanup INT TERM ERR
 # makes it easier to rerun manually after a failure
 rm -f "{{ step_artifact_dir }}/artifacts/FAILURES"
 
-ARTIFACT_DIR="/tmp/topsail_$(date +%Y%m%d%s)"
+ARTIFACT_DIR="/log/artifacts"
 
 echo "### Running '$cmd' against image '$image' ###"
 
 podman run \
+  --userns=keep-id \
+  --user "$(id -u):$(id -g)" \
   --rm \
   --name topsail-on-{{ jump_ci_prepare_step_cluster }} \
   \
-  --volume "{{ step_artifact_dir }}/artifacts:$ARTIFACT_DIR" \
+  --volume "{{ step_artifact_dir }}/artifacts:$ARTIFACT_DIR:Z" \
   --env ARTIFACT_DIR="$ARTIFACT_DIR" \
   \
   --volume {{ cluster_lock_dir }}/secrets/{{ jump_ci_prepare_step_secrets_path_env_key }}:/run/secrets/{{ jump_ci_prepare_step_secrets_path_env_key }}:ro \

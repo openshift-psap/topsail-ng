@@ -5,6 +5,7 @@ logging.getLogger().setLevel(logging.INFO)
 import json
 import signal
 import itertools
+import pathlib
 
 import subprocess
 
@@ -63,7 +64,7 @@ def run_toolbox_from_config(group, command, prefix=None, suffix=None, show_args=
 
     cmd_env = " ".join(env_vals)
 
-    return run(f'{cmd_env} ./run_toolbox.py from_config {group} {command} {_dict_to_run_toolbox_args(kwargs)}', **run_kwargs)
+    return run(f'{cmd_env} bin/run_toolbox.py from_config {group} {command} {_dict_to_run_toolbox_args(kwargs)}', **run_kwargs)
 
 
 def _dict_to_run_toolbox_args(args_dict):
@@ -99,7 +100,7 @@ def run_toolbox(group, command, artifact_dir_suffix=None, run_kwargs=None, mute_
 
     cmd_env = " ".join(env_vals)
 
-    return run(f'{cmd_env} ./run_toolbox.py {group} {command} {_dict_to_run_toolbox_args(kwargs)}', **run_kwargs)
+    return run(f'{cmd_env} bin/run_toolbox.py {group} {command} {_dict_to_run_toolbox_args(kwargs)}', **run_kwargs)
 
 
 def run(command, capture_stdout=False, capture_stderr=False, check=True, protect_shell=True, cwd=None, stdin_file=None, log_command=True, decode_stdout=True, decode_stderr=True):

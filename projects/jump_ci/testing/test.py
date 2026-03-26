@@ -122,7 +122,7 @@ def jump_ci(command):
                 PR_POSITIONAL_ARGS=test_args,
                 PR_POSITIONAL_ARG_0="jump-ci",
             )
-
+            idx = 0
             for idx, arg in enumerate(test_args.split()):
                 variables_overrides_dict[f"PR_POSITIONAL_ARG_{idx+1}"] = arg
 

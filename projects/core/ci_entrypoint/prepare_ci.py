@@ -533,6 +533,11 @@ def send_notification(project: str, operation: str, finish_reason: FinishReason,
     if not send_job_completion_notification:
         logger.info("Notifications module not available, skipping notification sending")
         return
+
+    if project == "jump_ci":
+        logger.info("No need to send notification in the JumpCI project")
+        return
+
     try:
         # Determine notification parameters
         success = finish_reason == FinishReason.SUCCESS

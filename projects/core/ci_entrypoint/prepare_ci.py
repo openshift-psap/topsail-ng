@@ -144,7 +144,7 @@ def setup_dual_output():
                 pass  # Exit gracefully on any error
 
     # 4. Start a background thread to act as the 'tee' process
-    daemon = threading.Thread(target=communicate, daemon=False)  # Not daemon so we can join it
+    daemon = threading.Thread(target=communicate, daemon=True)
     daemon.start()
 
     # Store state for cleanup

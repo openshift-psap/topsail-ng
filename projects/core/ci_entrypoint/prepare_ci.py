@@ -114,12 +114,16 @@ def setup_dual_output():
     os.dup2(write_fd, sys.stdout.fileno())
     os.dup2(write_fd, sys.stderr.fileno())
 
+    # 4. Make stdout and stderr line-buffered (unbuffered for text streams)
+    sys.stdout = os.fdopen(sys.stdout.fileno(), 'w', buffering=1)
+    sys.stderr = os.fdopen(sys.stderr.fileno(), 'w', buffering=1)
+
     # Create stop event for clean thread shutdown
     stop_event = threading.Event()
 
     def communicate():
         import select
-        with open(log_file_path, "a") as log_file, os.fdopen(original_stdout_fd, "w") as terminal:
+        with open(log_file_path, "a", buffering=1) as log_file, os.fdopen(original_stdout_fd, "w", buffering=1) as terminal:
             try:
                 while not stop_event.is_set():
                     # Use select to check if data is available with timeout

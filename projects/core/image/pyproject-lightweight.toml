@@ -12,6 +12,8 @@ dependencies = [
     "jinja2>=3.1.0,<3.2.0",
     "slack_sdk==3.35.0",
     "requests",
+    "jsonpath_ng",
+    "pyjwt",
 ]
 
 [build-system]

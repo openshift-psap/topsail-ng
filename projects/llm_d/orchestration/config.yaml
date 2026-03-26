@@ -1,0 +1,230 @@
+prepare:
+  skip: false
+  namespace:
+    name: llm-d-project
+
+  operators:
+    skip: false
+    list:
+      - name: "Red Hat Connectivity Link"
+        catalog: redhat-operators
+        operator: rhcl-operator
+        namespace: all
+        enabled: false
+
+      - name: "OpenShift Cert Manager"
+        catalog: redhat-operators
+        operator: openshift-cert-manager-operator
+        namespace: openshift-cert-manager-operator
+        enabled: true
+
+      - name: "Leader Worker Set"
+        catalog: redhat-operators
+        operator: leader-worker-set
+        namespace: openshift-lws
+        deploy_cr: true
+        enabled: true
+
+      - name: "Node Feature Discovery"
+        catalog: redhat-operators
+        operator: nfd
+        namespace: openshift-nfd
+        deploy_cr: 1
+        enabled: true
+
+      - name: "NVIDIA GPU Operator"
+        catalog: certified-operators
+        operator: gpu-operator-certified
+        namespace: nvidia-gpu-operator
+        deploy_cr: true
+        enabled: true
+
+      - name: "Grafana Operator"
+        catalog: community-operators
+        operator: grafana-operator
+        namespace: grafana-operator
+        enabled: true
+        extra_args:
+          all_namespaces: true
+
+  cluster:
+    skip: false
+    nodes:
+      auto_scale: false
+      auto_scale_down_on_exit: false
+      instance_type: gx3-16x80x1l4
+      count: 2
+
+  rhoai:
+    skip: false
+    image: "quay.io/rhoai/rhoai-fbc-fragment"
+    tag: "rhoai-3.3@sha256:f6e7db613cd040e53da2d47850477a9b914de18979adaaac47e15dc7c76f8a76"
+    channel: "stable-3.x"
+    datasciencecluster:
+      enable: "[kserve]"
+      extra_settings: '{"spec.components.kserve.rawDeploymentServiceConfig": "Headless"}'
+
+  gateway:
+    skip: false
+    name: openshift-ai-inference  # NOTE: Should not be changed for the time being
+
+  grafana:
+    skip: false
+    namespace: grafana
+    datasources:
+      - grafana/datasource.yaml
+    dashboards_dir: grafana/dashboards
+
+  monitoring:
+    skip: false
+    namespaces:
+      - "@prepare.namespace.name"
+
+  gpu:
+    wait_for_readiness: false
+
+  preload:
+    skip: false
+    extra_images: {}
+    node_selector_key: nvidia.com/gpu.present
+    node_selector_value: "true"
+
+  pvc:
+    enabled: true
+    size: 2000Gi
+    name: storage
+    access_mode: ReadWriteOnce
+    storage_class: null
+
+  model_downloader:
+    image: ghcr.io/opendatahub-io/rhaii-on-xks/kserve-storage-initializer:e6b5db0@sha256:b305264fe2211be2c6063500c4c11da79e8357af4b34dd8567b0d8e8dea7e1d4
+
+  cleanup:
+    skip: false
+
+models:
+  facebook-opt-125m:
+    name: facebook/opt-125m
+    source: hf://facebook/opt-125m
+    resources:
+      cpu: 2
+      memory: 8Gi
+
+  llama3-1-8b:
+    name: RedHatAI/Meta-Llama-3.1-8B-Instruct-FP8-dynamic
+    uri: oci://registry.redhat.io/rhelai1/modelcar-llama-3-1-8b-instruct-fp8-dynamic:1.5
+    # source: hf://RedHatAI/Meta-Llama-3.1-8B-Instruct-FP8-dynamic
+    resources: {}
+
+  llama3-3-70b:
+    name: RedHatAI/Llama-3.3-70B-Instruct-FP8-dynamic
+    source: hf://RedHatAI/Llama-3.3-70B-Instruct-FP8-dynamic
+    resources:
+      cpu: 4
+      memory: 64Gi
+
+  gpt-oss-120:
+    name: openai/gpt-oss-120b
+    source: hf://openai/gpt-oss-120b
+    resources:
+      cpu: 4
+      memory: 64Gi
+
+  granite4-tiny:
+    name: RedHatAI/granite-4.0-h-tiny-FP8-dynamic
+    source: hf://RedHatAI/granite-4.0-h-tiny-FP8-dynamic
+    resources: {}
+
+tests:
+  llmd:
+    skip: false
+    skip_prepare: false
+    flavors: intelligentrouting
+    namespace: "@prepare.namespace.name"
+
+    inference_service:
+      skip_deployment: false
+      name: llm-d
+      yaml_file: llama-3-1-8b-instruct-fp8.yaml
+      timeout: 900
+      do_simple_test: true
+      gateway:
+        name: gateway-external
+      model: llama3-1-8b
+      metrics:
+        manual_capture: true
+        scheduler_servicemonitor_name: kserve-llm-isvc-scheduler
+        vllm_podmonitor_name: kserve-llm-isvc-vllm-engine
+
+      # vLLM arguments (always applied)
+      vllm_args:
+        - "--disable-uvicorn-access-log"
+        - "--enable-prefix-caching"
+        - "--uvicorn-log-level=debug"
+        - "--trust-remote-code"
+        - "--disable-log-requests"
+        - "--max-model-len=40960" # keep in 5th position or uddate the presets
+        - "--gpu-memory-utilization=0.92"
+
+      kueue:
+        enabled: false
+        prefix: "kueue.x-k8s.io/"
+        labels:
+          pod-group-name: llmisvc
+          managed: "true"
+        annotations:
+          queue-name: perf-gpu-queue
+
+      # Extra properties to inject into the LLMISVC YAML using dotted-key notation
+      extra_properties: {}
+
+    benchmarks:
+      guidellm:
+        enabled: true
+        name: guidellm-benchmark
+        backend_type: openai_http
+        rate_type: concurrent
+        max_seconds: 120
+        max_requests: null
+        timeout: 900
+        data: prompt_tokens=256,output_tokens=128
+        rate: 1
+        sample_requests: 20
+
+  capture_prom: true
+  capture_prom_uwm: true
+  dry_mode: false
+  visualize: true
+
+export_artifacts:
+  enabled: false
+
+matbench:
+  enabled: true
+  preset: null
+  workload: projects.llm-d.visualizations.llmd_inference
+  config_file: plots.yaml
+  # directory to plot
+  lts:
+    generate: true
+    opensearch:
+      export:
+        enabled: false
+        enabled_on_replot: false
+        fail_test_on_fail: true
+      instance: smoke
+      index: forge-llm-d-cpt
+      index_prefix: ""
+      build_counter_index: "forge-llm-d-builds" # used to generate a unique ID for each build
+    regression_analyses:
+      enabled: false
+      enabled_on_replot: true
+      upload_lts_on_regression: true
+      # if the regression analyses fail, mark the test as failed
+      fail_test_on_regression: true
+      notification:
+        enabled: true
+        title: "llm-d CPT"
+  download:
+    mode: prefer_cache
+    url: null

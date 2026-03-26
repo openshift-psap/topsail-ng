@@ -1,0 +1,13 @@
+# list of the vaults used by this FORGE project
+
+- name: forge-llm-d
+  env_key: FORGE_SECRETS_LLM_D
+  content:
+    rhoai_pull_secret:
+      file: rhoai_rc.pull-secret
+      description: |
+        Pull secret to access RHOAI RC builds in quay.io
+    hf_token:
+      file: hf_token
+      description: |
+        HuggingFace TOKEN to access HF models

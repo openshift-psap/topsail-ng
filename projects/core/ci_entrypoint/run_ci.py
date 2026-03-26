@@ -214,7 +214,10 @@ def get_available_projects() -> List[str]:
         if proj_dir.name.startswith('.'):
             continue
 
-        projects.append(proj_dir.name)
+        # Only include projects that have an orchestration directory
+        orchestration_dir = proj_dir / "orchestration"
+        if orchestration_dir.exists() and orchestration_dir.is_dir():
+            projects.append(proj_dir.name)
 
     return sorted(projects)
 

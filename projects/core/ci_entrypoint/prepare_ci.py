@@ -309,10 +309,6 @@ def ci_banner(project: str, operation: str, args: List[str]):
         operation: Operation being executed
         args: Additional arguments
     """
-    print(f"""\
-===> Running PSAP CI Test suite <===
-===> {project} {operation} {' '.join(args)} <===
-""")
 
     base_sha = os.environ.get("PULL_BASE_SHA", "main")
     if base_sha == "main":

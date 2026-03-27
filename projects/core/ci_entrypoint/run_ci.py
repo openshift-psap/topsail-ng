@@ -92,6 +92,7 @@ def install_extra_packages(packages):
             capture_output=True
         )
         print(f"✅ {'/'.join(packages)} packages installed successfully with uv")
+        print()
     except (FileNotFoundError, subprocess.CalledProcessError):
         # Fallback to pip with user installation
         try:
@@ -101,6 +102,7 @@ def install_extra_packages(packages):
                 capture_output=True
             )
             print(f"✅ {'/'.join(packages)} packages installed successfully with pip")
+            print()
         except subprocess.CalledProcessError as pip_error:
             print(f"❌ Failed to install {'/'.join(packages)}: {pip_error}")
             raise RuntimeError("failed to install the extra packages")
@@ -238,6 +240,7 @@ def list_projects():
         project_dir = find_project_directory(project)
         ci_script = find_ci_script(project_dir, "ci")
         status = "✅" if ci_script else "⚠️"
+
         click.echo(f"   {status} {project}")
 
     click.echo()
@@ -342,10 +345,12 @@ def parse_cli_help(help_output: str) -> List[str]:
 def execute_project_operation(project: str, operation: str, args: tuple, verbose: bool, dry_run: bool):
     """Execute a project operation."""
     if verbose:
+        click.echo("")
         click.echo(f"🚀 TOPSAIL-NG CI Orchestration")
         click.echo(f"Project: {project}")
         click.echo(f"Operation: {operation}")
         click.echo(f"Arguments: {list(args)}")
+        click.echo("")
 
     # Execute CI preparation tasks
     if prepare_ci:
@@ -417,8 +422,10 @@ def execute_project_operation(project: str, operation: str, args: tuple, verbose
         return
 
     # Execute the command
-    click.echo(f"▶️  Executing {project} {operation} {' '.join(args)}")
-    click.echo(" ".join(cmd))
+    click.echo("")
+    click.echo(f"▶️  Executing {project} {operation} {' '.join(args)} | {' '.join(cmd)}")
+    click.echo("")
+
     try:
         # Track start time for duration calculation
         start_time = time.time()
@@ -431,7 +438,9 @@ def execute_project_operation(project: str, operation: str, args: tuple, verbose
             stdout=None,  # Inherit stdout for pdb/debugging
             stderr=None   # Inherit stderr for pdb/debugging
         )
-        click.echo(f"▶️  Executing {project} {operation} {' '.join(args)} --> {result.returncode}")
+        click.echo()
+        click.echo(f"▶️  Execution of {project} {operation} {' '.join(args)} returned {result.returncode}")
+        click.echo()
 
         finish_reason = prepare_ci.FinishReason.SUCCESS if result.returncode == 0 \
             else prepare_ci.FinishReason.ERROR
@@ -448,6 +457,8 @@ def execute_project_operation(project: str, operation: str, args: tuple, verbose
                 msg = click.style(f"✅ {project} {operation} completed successfully", fg='green')
             else:
                 msg = click.style(f"❌ {project} {operation} failed with exit code {result.returncode}", fg='red')
+
+        click.echo()
         click.echo(msg, err=not success)
 
         if prepare_ci:
@@ -477,7 +488,7 @@ def execute_project_operation(project: str, operation: str, args: tuple, verbose
 @click.argument('project', required=False)
 @click.argument('operation', required=False)
 @click.argument('args', nargs=-1)
-@click.option('--verbose', '-v', is_flag=True, help='Enable verbose output')
+@click.option('--verbose', '-v', is_flag=True, help='Enable verbose output', default=True)
 @click.option('--dry-run', is_flag=True, help='Show what would be executed without running it')
 def main(project, operation, args, verbose, dry_run):
     """
@@ -495,6 +506,7 @@ def main(project, operation, args, verbose, dry_run):
         run llm-d test
         run skeleton validate
     """
+
     # No arguments - list projects
     if not project:
         list_projects()

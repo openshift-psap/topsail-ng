@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-TOPSAIL-NG CI Orchestration Entrypoint
+FORGE CI Orchestration Entrypoint
 
 This script provides the unified entrypoint for CI operations across all projects
-in the TOPSAIL-NG test harness. It follows the constitutional principle of
+in the FORGE test harness. It follows the constitutional principle of
 CI-First Testing by providing consistent, reliable CI integration.
 
 Usage:
@@ -27,7 +27,19 @@ import time
 from pathlib import Path
 from typing import List, Optional
 
-TOPSAIL_HOME = Path(__file__).resolve().parent.parent.parent.parent
+TOPSAIL_ENV = [
+    "TOPSAIL_LIGHT_IMAGE", "TOPSAIL_JUMP_CI_INSIDE_JUMP_HOST", "TOPSAIL_HOME",
+    "TOPSAIL_OPENSHIFT_CI_STEP_DIR",
+    "PSAP_TOPSAIL_JUMP_CI_SECRET_PATH"
+]
+
+for env_name in TOPSAIL_ENV:
+    value = os.environ.get(env_name)
+    if not value: continue
+    os.environ[env_name.replace("TOPSAIL", "FORGE")] = value
+
+
+FORGE_HOME = Path(__file__).resolve().parent.parent.parent.parent
 
 EXTRA_PACKAGES = ["click", "requests"]
 
@@ -169,7 +181,7 @@ def find_project_directory(project_name: str) -> Optional[Path]:
         Path to project directory if found, None otherwise
     """
     # Look in the projects directory
-    projects_dir = TOPSAIL_HOME / "projects"
+    projects_dir = FORGE_HOME / "projects"
     project_dir = projects_dir / project_name
 
     if project_dir.exists() and project_dir.is_dir():
@@ -207,7 +219,7 @@ def find_ci_script(project_dir: Path, operation: str) -> Optional[Path]:
 def get_available_projects() -> List[str]:
     """Get list of available projects."""
 
-    projects_dir = TOPSAIL_HOME / "projects"
+    projects_dir = FORGE_HOME / "projects"
 
     if not projects_dir.exists():
         return []
@@ -346,7 +358,7 @@ def execute_project_operation(project: str, operation: str, args: tuple, verbose
     """Execute a project operation."""
     if verbose:
         click.echo("")
-        click.echo(f"🚀 TOPSAIL-NG CI Orchestration")
+        click.echo(f"🚀 FORGE CI Orchestration")
         click.echo(f"Project: {project}")
         click.echo(f"Operation: {operation}")
         click.echo(f"Arguments: {list(args)}")
@@ -492,7 +504,7 @@ def execute_project_operation(project: str, operation: str, args: tuple, verbose
 @click.option('--dry-run', is_flag=True, help='Show what would be executed without running it')
 def main(project, operation, args, verbose, dry_run):
     """
-    TOPSAIL-NG CI Orchestration Entrypoint.
+    FORGE CI Orchestration Entrypoint.
 
     \b
     Usage:

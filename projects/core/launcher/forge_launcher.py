@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-TOPSAIL Development Environment Launcher
+FORGE Development Environment Launcher
 
 A simplified Python/Click version of the bash launcher scripts that provides
-containerized development environment management for TOPSAIL using Toolbx and Podman.
+containerized development environment management for FORGE using Toolbx and Podman.
 
 Constitutional Compliance:
 - CI-First Testing: Consistent containerized development environment
@@ -23,8 +23,8 @@ import yaml
 CONFIG_FILE = Path(__file__).resolve().parent / 'launcher_config.yaml'
 CONFIG_EXAMPLE_FILE = Path(__file__).resolve().parent / 'launcher_config.yaml.example'
 
-class TopsailLauncher:
-    """Manages TOPSAIL containerized development environment."""
+class ForgeLauncher:
+    """Manages FORGE containerized development environment."""
 
     def __init__(self, verbose: bool = False):
         self.verbose = verbose
@@ -34,12 +34,12 @@ class TopsailLauncher:
         """Load configuration from default and custom config files."""
         config = {
             # Default configuration
-            'topsail_home': os.path.expanduser('/path/to/topsail'),
-            'topsail_toolbox_command': 'bash',
-            'topsail_toolbox_name': 'topsail-ng',
-            'topsail_image_extra_pkg': '',
-            'container_image': 'topsail-ng',  # Configurable image name for build and run
-            'container_file': None,  # Will be set dynamically based on topsail_home
+            'forge_home': os.path.expanduser('/path/to/forge'),
+            'forge_toolbox_command': 'bash',
+            'forge_toolbox_name': 'forge',
+            'forge_image_extra_pkg': '',
+            'container_image': 'forge',  # Configurable image name for build and run
+            'container_file': None,  # Will be set dynamically based on forge_home
             'exported_env_vars': [  # Environment variables to export to container
                 'PSAP_ODS_SECRET_PATH',
                 'KUBECONFIG',
@@ -76,16 +76,16 @@ class TopsailLauncher:
             if isinstance(value, str):
                 config[key] = os.path.expandvars(os.path.expanduser(value))
 
-        # Set container file path - always relative to topsail_home
+        # Set container file path - always relative to forge_home
         if not config['container_file']:
             # Use default path
             container_file_path = 'projects/core/image/Containerfile'
         else:
             container_file_path = config['container_file']
 
-        # Always resolve relative to topsail_home unless it's already absolute
+        # Always resolve relative to forge_home unless it's already absolute
         if not os.path.isabs(container_file_path):
-            config['container_file'] = os.path.join(config['topsail_home'], container_file_path)
+            config['container_file'] = os.path.join(config['forge_home'], container_file_path)
         else:
             config['container_file'] = container_file_path
 
@@ -118,8 +118,8 @@ class TopsailLauncher:
         """Get environment variables to pass to the container."""
         # Core environment variables (always included)
         env = {
-            'TOPSAIL_HOME': self.config['topsail_home'],
-            'PYTHONPATH': self.config['topsail_home'],
+            'FORGE_HOME': self.config['forge_home'],
+            'PYTHONPATH': self.config['forge_home'],
             'HOME': os.environ.get('HOME', ''),
         }
 
@@ -163,7 +163,7 @@ class TopsailLauncher:
     def _container_exists(self) -> bool:
         """Check if the toolbox container exists."""
         try:
-            cmd = ['podman', 'inspect', '--type', 'container', self.config['topsail_toolbox_name']]
+            cmd = ['podman', 'inspect', '--type', 'container', self.config['forge_toolbox_name']]
             if self.verbose:
                 click.echo(f"🔍 Checking container: {' '.join(cmd)}")
             result = subprocess.run(cmd, capture_output=True, check=False, timeout=10)
@@ -186,7 +186,7 @@ class TopsailLauncher:
 
         if self._has_toolbox():
             cmd = [
-                'toolbox', 'run', '-c', self.config['topsail_toolbox_name'],
+                'toolbox', 'run', '-c', self.config['forge_toolbox_name'],
                 '--', 'bash', '-c', full_command
             ]
         else:
@@ -196,7 +196,7 @@ class TopsailLauncher:
                 if v:
                     env_args.extend(['--env', f'{k}={v}'])
 
-            topsail_home = self.config['topsail_home']
+            forge_home = self.config['forge_home']
             home = os.environ.get('HOME', '')
 
             cmd = [
@@ -204,8 +204,8 @@ class TopsailLauncher:
                 '--security-opt', 'label=disable',
                 '--cgroupns', 'host',
                 '--network=host',
-                '-v', f'{topsail_home}:{topsail_home}:Z',
-                '-w', working_dir or topsail_home
+                '-v', f'{forge_home}:{forge_home}:Z',
+                '-w', working_dir or forge_home
             ] + env_args + [
                 self.config['container_image'],
                 '/bin/bash', '-c', full_command
@@ -232,10 +232,10 @@ class TopsailLauncher:
             return 1
 
     def build_image(self, extra_packages: List[str] = None) -> int:
-        """Build the TOPSAIL container image."""
-        click.echo("🔨 Building TOPSAIL container image...")
+        """Build the FORGE container image."""
+        click.echo("🔨 Building FORGE container image...")
 
-        topsail_home = self.config['topsail_home']
+        forge_home = self.config['forge_home']
         container_file = Path(self.config['container_file'])
         image_name = self.config['container_image']
 
@@ -246,7 +246,7 @@ class TopsailLauncher:
         # Build base image
         build_cmd = [
             'podman', 'build',
-            str(topsail_home),
+            str(forge_home),
             '-f', str(container_file),
             '-t', image_name
         ]
@@ -262,8 +262,8 @@ class TopsailLauncher:
 
             # Build overlay with extra packages if needed
             packages = extra_packages or []
-            if self.config.get('topsail_image_extra_pkg'):
-                packages.extend(self.config['topsail_image_extra_pkg'].split())
+            if self.config.get('forge_image_extra_pkg'):
+                packages.extend(self.config['forge_image_extra_pkg'].split())
 
             if packages:
                 overlay_dockerfile = f"""FROM {image_name}
@@ -307,7 +307,7 @@ USER 1001
 
     def recreate_container(self) -> int:
         """Recreate the toolbox container."""
-        container_name = self.config['topsail_toolbox_name']
+        container_name = self.config['forge_toolbox_name']
         image_name = self.config['container_image']
 
         click.echo(f"♻️  Recreating container: {container_name}")
@@ -331,11 +331,11 @@ USER 1001
         if self._has_toolbox():
             cmd = ['toolbox', 'create', container_name, '--image', image_name]
         else:
-            topsail_home = self.config['topsail_home']
+            forge_home = self.config['forge_home']
             cmd = [
                 'podman', 'run',
                 '--name', container_name,
-                '-v', f'{topsail_home}:/topsail',
+                '-v', f'{forge_home}:/forge',
                 '--detach', '--tty',
                 '--entrypoint', '/bin/bash',
                 image_name
@@ -360,17 +360,17 @@ USER 1001
 @click.option('--verbose', '-v', is_flag=True, help='Enable verbose output')
 @click.pass_context
 def cli(ctx, verbose):
-    """TOPSAIL Development Environment Launcher."""
+    """FORGE Development Environment Launcher."""
     ctx.ensure_object(dict)
     ctx.obj['verbose'] = verbose
-    ctx.obj['launcher'] = TopsailLauncher(verbose)
+    ctx.obj['launcher'] = ForgeLauncher(verbose)
 
 
 @cli.command()
 @click.option('--extra-packages', '-p', multiple=True, help='Extra packages to install')
 @click.pass_context
 def build(ctx, extra_packages):
-    """Build the TOPSAIL container image."""
+    """Build the FORGE container image."""
     launcher = ctx.obj['launcher']
     sys.exit(launcher.build_image(list(extra_packages)))
 
@@ -378,7 +378,7 @@ def build(ctx, extra_packages):
 @cli.command()
 @click.pass_context
 def recreate(ctx):
-    """Recreate the TOPSAIL toolbox container."""
+    """Recreate the FORGE toolbox container."""
     launcher = ctx.obj['launcher']
     sys.exit(launcher.recreate_container())
 
@@ -389,20 +389,20 @@ def recreate(ctx):
 @click.option('--here', is_flag=True, help='Stay in current directory')
 @click.pass_context
 def enter(ctx, command, args, here):
-    """Enter the TOPSAIL development environment."""
+    """Enter the FORGE development environment."""
     launcher = ctx.obj['launcher']
 
     if command:
         full_command = f"{command} {' '.join(args)}"
     elif here:
-        full_command = launcher.config['topsail_toolbox_command']
+        full_command = launcher.config['forge_toolbox_command']
         working_dir = os.getcwd()
     else:
-        full_command = launcher.config['topsail_toolbox_command']
-        working_dir = launcher.config['topsail_home']
+        full_command = launcher.config['forge_toolbox_command']
+        working_dir = launcher.config['forge_home']
 
     if not here and not command:
-        working_dir = launcher.config['topsail_home']
+        working_dir = launcher.config['forge_home']
     else:
         working_dir = os.getcwd() if here else None
 
@@ -413,10 +413,10 @@ def enter(ctx, command, args, here):
 @click.argument('args', nargs=-1)
 @click.pass_context
 def run(ctx, args):
-    """Run TOPSAIL's main run command in the container."""
+    """Run FORGE's main run command in the container."""
     launcher = ctx.obj['launcher']
     command = f"./run {' '.join(args)}"
-    working_dir = launcher.config['topsail_home']
+    working_dir = launcher.config['forge_home']
     sys.exit(launcher._run_toolbox_command(command, working_dir))
 
 
@@ -424,20 +424,20 @@ def run(ctx, args):
 @click.argument('args', nargs=-1)
 @click.pass_context
 def run_cmd(ctx, args):
-    """Run TOPSAIL's run_toolbox.py command in the container."""
+    """Run FORGE's run_toolbox.py command in the container."""
     launcher = ctx.obj['launcher']
     command = f"./run_toolbox.py {' '.join(args)}"
-    working_dir = launcher.config['topsail_home']
+    working_dir = launcher.config['forge_home']
     sys.exit(launcher._run_toolbox_command(command, working_dir))
 
 
 @cli.command()
 @click.pass_context
 def status(ctx):
-    """Show status of TOPSAIL development environment."""
+    """Show status of FORGE development environment."""
     launcher = ctx.obj['launcher']
 
-    click.echo("📊 TOPSAIL Development Environment Status:")
+    click.echo("📊 FORGE Development Environment Status:")
     click.echo()
 
     # Check toolbox availability
@@ -446,12 +446,12 @@ def status(ctx):
     else:
         click.echo("🔧 Toolbox: ❌ Not available (using podman fallback)")
 
-    # Check topsail_home
-    topsail_home = Path(launcher.config['topsail_home'])
-    if topsail_home.exists():
-        click.echo(f"📁 topsail_home: ✅ Found at {topsail_home}")
+    # Check forge_home
+    forge_home = Path(launcher.config['forge_home'])
+    if forge_home.exists():
+        click.echo(f"📁 forge_home: ✅ Found at {forge_home}")
     else:
-        click.echo(f"📁 topsail_home: ❌ Not found at {topsail_home}")
+        click.echo(f"📁 forge_home: ❌ Not found at {forge_home}")
 
     # Check container image
     image_name = launcher.config['container_image']
@@ -462,7 +462,7 @@ def status(ctx):
         click.echo(f"   💡 Run 'build' to create the image")
 
     # Check container
-    container_name = launcher.config['topsail_toolbox_name']
+    container_name = launcher.config['forge_toolbox_name']
     if launcher._container_exists():
         click.echo(f"🏗️  Container: ✅ {container_name} exists")
     else:
@@ -480,7 +480,7 @@ def status(ctx):
 
     # Overall readiness check
     ready = (
-        topsail_home.exists() and
+        forge_home.exists() and
         launcher._image_exists() and
         launcher._container_exists()
     )
@@ -490,8 +490,8 @@ def status(ctx):
         click.echo("   💡 Use 'enter' to start working")
     else:
         click.echo("⚠️  Status: ❌ Setup required")
-        if not topsail_home.exists():
-            click.echo(f"   📝 Set topsail_home: config --set topsail_home /path/to/topsail")
+        if not forge_home.exists():
+            click.echo(f"   📝 Set forge_home: config --set forge_home /path/to/forge")
         if not launcher._image_exists():
             click.echo(f"   🔨 Build image: build")
         if not launcher._container_exists():
@@ -586,7 +586,7 @@ def config(ctx, set_config, set_env, pass_env, edit):
             sys.exit(1)
     else:
         # Show configuration
-        click.echo("📋 Current TOPSAIL Launcher Configuration:")
+        click.echo("📋 Current FORGE Launcher Configuration:")
         click.echo(f"📄 Config file: {CONFIG_FILE}")
         click.echo()
 
@@ -604,16 +604,16 @@ def config(ctx, set_config, set_env, pass_env, edit):
         click.echo()
         click.echo(f"🔧 Toolbox available: {'✅ Yes' if launcher._has_toolbox() else '❌ No (using podman)'}")
 
-        # Check if TOPSAIL_HOME exists
-        topsail_home = Path(launcher.config['topsail_home'])
-        if topsail_home.exists():
-            click.echo(f"📁 TOPSAIL_HOME: ✅ Found at {topsail_home}")
+        # Check if FORGE_HOME exists
+        forge_home = Path(launcher.config['forge_home'])
+        if forge_home.exists():
+            click.echo(f"📁 FORGE_HOME: ✅ Found at {forge_home}")
         else:
-            click.echo(f"📁 TOPSAIL_HOME: ❌ Not found at {topsail_home}")
+            click.echo(f"📁 FORGE_HOME: ❌ Not found at {forge_home}")
 
         click.echo()
         click.echo("💡 Usage examples:")
-        click.echo("   config --set topsail_home /path/to/topsail      # Config settings")
+        click.echo("   config --set forge_home /path/to/forge      # Config settings")
         click.echo("   config --set-env CUSTOM_VAR custom_value        # Custom env vars")
         click.echo("   config --pass-env MY_TOKEN                      # Export host env var")
         click.echo("   config --edit                                   # Edit config file")

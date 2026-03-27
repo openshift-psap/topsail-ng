@@ -17,9 +17,12 @@ GITHUB_APP_PEM_FILE = "topsail-bot.2024-09-18.private-key.pem"
 GITHUB_APP_CLIENT_ID_FILE = "topsail-bot.clientid"
 SLACK_TOKEN_FILE = "topsail-bot.slack-token"
 
+DEFAULT_REPO_OWNER = "openshift-psap"
+DEFAULT_REPO_NAME = "topsail-ng"
+
 def get_secrets():
     # currently hardcoded, because there's no configuration file at this level
-    SECRET_ENV_KEYS = ("PSAP_TOPSAIL_JUMP_CI_SECRET_PATH",)
+    SECRET_ENV_KEYS = ("PSAP_FORGE_JUMP_CI_SECRET_PATH",)
 
     secret_env_key = None
     warn = []
@@ -217,7 +220,6 @@ def get_slack_channel_message(anchor: str, pr_data: dict):
     if not pr_data:
         return message
 
-    # see eg https://api.github.com/repos/openshift-psap/topsail/pulls/362 for the content of 'pr_data'
     message += f"""
 
 ```{pr_data['title']}```
@@ -296,17 +298,6 @@ def get_pr_number():
     if os.environ.get("OPENSHIFT_CI") == "true":
         return os.environ.get("PULL_NUMBER")
 
-    elif os.environ.get("PERFLAB_CI") == "true":
-        git_ref = os.environ["PERFLAB_GIT_REF"]
-        if not git_ref.startswith("refs/pull/"):
-            logging.debug("Perflab job not running from a PR, no PR number available.")
-            return
-
-        return git_ref.split("/")[2]
-
-    elif os.environ.get("TOPSAIL_LOCAL_CI") == "true":
-        return os.environ["PULL_NUMBER"]
-
     else:
         logging.warning("Test not running from a well-known CI engine, cannot extract a PR number.")
         return
@@ -318,7 +309,7 @@ def get_ci_base_link(is_raw_file=False, is_dir=False):
         job_spec = json.loads(os.environ["JOB_SPEC"])
 
         test_name = os.environ['JOB_NAME_SAFE']
-        test_path = os.environ.get("TOPSAIL_OPENSHIFT_CI_STEP_DIR", "TOPSAIL_OPENSHIFT_CI_STEP_DIR_missing")
+        test_path = os.environ.get("FORGE_OPENSHIFT_CI_STEP_DIR", "FORGE_OPENSHIFT_CI_STEP_DIR_missing")
         job = job_spec["job"]
         build_id = job_spec["buildid"]
 
@@ -337,19 +328,6 @@ def get_ci_base_link(is_raw_file=False, is_dir=False):
                  + f"/artifacts/{test_name}/{test_path}",
                  ""))
 
-    elif os.environ.get("PERFLAB_CI") == "true":
-        artifact_dir = os.environ['ARTIFACT_DIR'].removeprefix("/logs/artifacts")
-
-        return ((f"https://{os.environ['JENKINS_INSTANCE']}/{os.environ['JENKINS_JOB']}/{os.environ['JENKINS_BUILD_NUMBER']}/" +
-                f"artifact/run/{os.environ['JENKINS_JUMPHOST']}/{artifact_dir}"),
-                ("/*view*/" if is_raw_file else ""))
-
-    elif os.environ.get("TOPSAIL_LOCAL_CI") == "true":
-        bucket_name = os.environ.get("TOPSAIL_LOCAL_CI_BUCKET_NAME")
-        job_name_safe = os.environ.get("JOB_NAME_SAFE")
-        run_id = os.environ.get("TEST_RUN_IDENTIFIER")
-
-        return f"https://{bucket_name}.s3.amazonaws.com/{'index.html#' if is_dir else ''}local-ci/{job_name_safe}/{run_id}{'/' if is_dir else ''}", ""
     else:
         logging.warning("Test not running from a well-known CI engine, cannot extract the artifacts link.")
 
@@ -357,7 +335,7 @@ def get_ci_base_link(is_raw_file=False, is_dir=False):
 
 
 def get_org_repo():
-    return os.environ.get('REPO_OWNER', "openshift-psap"), os.environ.get('REPO_NAME', "topsail")
+    return os.environ.get('REPO_OWNER', DEFAULT_REPO_OWNER), os.environ.get('REPO_NAME', DEFAULT_REPO_NAME)
 
 
 def get_github_secrets(secret_dir, secret_env_key):

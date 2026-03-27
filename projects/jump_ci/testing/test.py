@@ -13,6 +13,8 @@ configure_logging()
 
 from projects.jump_ci.testing import utils, prepare_jump_ci, tunnelling
 
+LOCK_DIR_PREFIX = "/tmp/topsail"
+
 def rewrite_variables_overrides(variable_overrides_dict, nb_args_to_eat):
     new_variable_overrides = dict()
 
@@ -72,8 +74,8 @@ def jump_ci(command):
         secrets_path_env_key = config.project.get_config("secrets.dir.env_key")
 
         extra_env = dict(
-            TOPSAIL_JUMP_CI="true",
-            TOPSAIL_JUMP_CI_INSIDE_JUMP_HOST="true",
+            FORGE_JUMP_CI="true",
+            FORGE_JUMP_CI_INSIDE_JUMP_HOST="true",
         )
 
         def prepare_env_file(_extra_env):
@@ -109,7 +111,7 @@ def jump_ci(command):
 
         run.run_toolbox("jump_ci", "ensure_lock", cluster=cluster, owner=utils.get_lock_owner())
 
-        cluster_lock_dir = f" /tmp/topsail_{cluster}"
+        cluster_lock_dir = f"{LOCK_DIR_PREFIX}_{cluster}"
 
         if not project:
             project = config.project.get_config("project.name")
@@ -122,7 +124,7 @@ def jump_ci(command):
                 PR_POSITIONAL_ARGS=test_args,
                 PR_POSITIONAL_ARG_0="jump-ci",
             )
-
+            idx = 0
             for idx, arg in enumerate(test_args.split()):
                 variables_overrides_dict[f"PR_POSITIONAL_ARG_{idx+1}"] = arg
 
@@ -170,9 +172,9 @@ def jump_ci(command):
                 if multi_run_dirname:
                     test_artifacts_dirname = f"{env.ARTIFACT_DIR.name}/{test_artifacts_dirname}"
 
-                if step_dir := os.environ.get("TOPSAIL_OPENSHIFT_CI_STEP_DIR"):
+                if step_dir := os.environ.get("FORGE_OPENSHIFT_CI_STEP_DIR"):
                     # see "jump_ci retrieve_artifacts" below
-                    extra_env["TOPSAIL_OPENSHIFT_CI_STEP_DIR"] = f"{step_dir}/{test_artifacts_dirname}"
+                    extra_env["FORGE_OPENSHIFT_CI_STEP_DIR"] = f"{step_dir}/{test_artifacts_dirname}"
 
                 env_fd_path, env_file = prepare_env_file(extra_env)
 

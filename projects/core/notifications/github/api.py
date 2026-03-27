@@ -74,7 +74,7 @@ if __name__ == "__main__":
     PEM_FILE = "topsail-bot.2024-09-18.private-key.pem"
     CLIENT_ID_FILE = "client_id"
     ORG = "openshift-psap"
-    REPO = "topsail"
+    REPO = "forge"
 
     with open(CLIENT_ID_FILE) as f:
         client_id = f.read().strip()

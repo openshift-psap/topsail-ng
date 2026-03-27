@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-TOPSAIL-NG CI Preparation Module
+FORGE CI Preparation Module
 
 This module handles all preparation tasks needed before executing CI operations,
 including parsing GitHub PR arguments and setting up the execution environment.
@@ -21,7 +21,10 @@ from pathlib import Path
 from typing import Optional, List
 from enum import StrEnum
 
-IS_LIGHTWEIGHT_IMAGE = os.environ.get("TOPSAIL_LIGHT_IMAGE")
+IS_LIGHTWEIGHT_IMAGE = os.environ.get("FORGE_LIGHT_IMAGE")
+
+DEFAULT_REPO_OWNER = "openshift-psap"
+DEFAULT_REPO_NAME = "topsail-ng"
 
 class FinishReason(StrEnum):
     SUCCESS = "success"
@@ -114,12 +117,16 @@ def setup_dual_output():
     os.dup2(write_fd, sys.stdout.fileno())
     os.dup2(write_fd, sys.stderr.fileno())
 
+    # 4. Make stdout and stderr line-buffered (unbuffered for text streams)
+    sys.stdout = os.fdopen(sys.stdout.fileno(), 'w', buffering=1)
+    sys.stderr = os.fdopen(sys.stderr.fileno(), 'w', buffering=1)
+
     # Create stop event for clean thread shutdown
     stop_event = threading.Event()
 
     def communicate():
         import select
-        with open(log_file_path, "a") as log_file, os.fdopen(original_stdout_fd, "w") as terminal:
+        with open(log_file_path, "a", buffering=1) as log_file, os.fdopen(original_stdout_fd, "w", buffering=1) as terminal:
             try:
                 while not stop_event.is_set():
                     # Use select to check if data is available with timeout
@@ -144,7 +151,7 @@ def setup_dual_output():
                 pass  # Exit gracefully on any error
 
     # 4. Start a background thread to act as the 'tee' process
-    daemon = threading.Thread(target=communicate, daemon=False)  # Not daemon so we can join it
+    daemon = threading.Thread(target=communicate, daemon=True)
     daemon.start()
 
     # Store state for cleanup
@@ -218,12 +225,6 @@ def parse_and_save_pr_arguments() -> Optional[Path]:
     shared_dir_str = os.environ.get('SHARED_DIR')
     shared_dir = Path(shared_dir_str) if shared_dir_str else None
 
-    # Handle TOPSAIL local CI
-    if os.environ.get('TOPSAIL_LOCAL_CI') == 'true' and not shared_dir:
-        shared_dir = Path('/tmp/shared')
-        logger.info(f"TOPSAIL local CI detected, using SHARED_DIR={shared_dir}")
-        shared_dir.mkdir(parents=True, exist_ok=True)
-
     logger.info(f"Parsing GitHub PR arguments for {repo_owner}/{repo_name}#{pull_number}")
 
     try:
@@ -290,7 +291,7 @@ def precheck_artifact_dir() -> bool:
     logger.info("ARTIFACT_DIR not set, but not running in a CI. Creating a directory for it ...")
 
     # Create default ARTIFACT_DIR
-    default_dir = f"/tmp/topsail_{datetime.now().strftime('%Y%m%d')}"
+    default_dir = f"/tmp/forge_{datetime.now().strftime('%Y%m%d')}"
     os.environ['ARTIFACT_DIR'] = default_dir
     Path(default_dir).mkdir(parents=True, exist_ok=True)
     logger.info(f"Using ARTIFACT_DIR={default_dir} as default artifacts directory.")
@@ -305,10 +306,6 @@ def ci_banner(project: str, operation: str, args: List[str]):
         operation: Operation being executed
         args: Additional arguments
     """
-    print(f"""\
-===> Running PSAP CI Test suite <===
-===> {project} {operation} {' '.join(args)} <===
-""")
 
     base_sha = os.environ.get("PULL_BASE_SHA", "main")
     if base_sha == "main":
@@ -355,20 +352,19 @@ def system_prechecks() -> bool:
 
     # Check for existing failures
     failures_file = artifact_path / "FAILURES"
-    if failures_file.exists() and not os.environ.get("TOPSAIL_IGNORE_FAILURES_FILE"):
-        raise ValueError(f"File '{failures_file}' already exists, cannot continue. Set TOPSAIL_IGNORE_FAILURES_FILE=1 to ignore this.")
+    if failures_file.exists() and not os.environ.get("FORGE_IGNORE_FAILURES_FILE"):
+        raise ValueError(f"File '{failures_file}' already exists, cannot continue. Set FORGE_IGNORE_FAILURES_FILE=1 to ignore this.")
 
     # Handle OpenShift CI PR arguments (already handled by parse_and_save_pr_arguments)
     if (os.environ.get('OPENSHIFT_CI') == 'true' and
-        os.environ.get('TOPSAIL_LOCAL_CI_MULTI') != 'true' and
-        os.environ.get('TOPSAIL_JUMP_CI_INSIDE_JUMP_HOST') != 'true'):
+        os.environ.get('FORGE_JUMP_CI_INSIDE_JUMP_HOST') != 'true'):
 
-        if not os.environ.get('TOPSAIL_OPENSHIFT_CI_STEP_DIR'):
+        if not os.environ.get('FORGE_OPENSHIFT_CI_STEP_DIR'):
             hostname = os.environ.get('HOSTNAME', '')
             job_name_safe = os.environ.get('JOB_NAME_SAFE', '')
             if hostname and job_name_safe:
                 step_dir = hostname.replace(f"{job_name_safe}-", "") + "/artifacts"
-                os.environ['TOPSAIL_OPENSHIFT_CI_STEP_DIR'] = step_dir
+                os.environ['FORGE_OPENSHIFT_CI_STEP_DIR'] = step_dir
 
     # Remove any old failure markers
     old_failure = artifact_path / "FAILURE"
@@ -377,16 +373,16 @@ def system_prechecks() -> bool:
 
     # Store git versions
     try:
-        # TOPSAIL git version
+        # FORGE git version
         result = subprocess.run(
             ["git", "describe", "HEAD", "--long", "--always"],
             capture_output=True,
             text=True,
             timeout=10
         )
-        topsail_version = result.stdout.strip() if result.returncode == 0 else "git missing"
-        (artifact_path / "topsail.git_version").write_text(topsail_version + "\n")
-        logger.info(f"Saving TOPSAIL git version into {artifact_path}/topsail.git_version")
+        forge_version = result.stdout.strip() if result.returncode == 0 else "git missing"
+        (artifact_path / "forge.git_version").write_text(forge_version + "\n")
+        logger.info(f"Saving FORGE git version into {artifact_path}/forge.git_version")
 
         # Matrix-benchmarking git version (if exists)
         matbench_dir = Path(__file__).parent.parent.parent / "matrix_benchmarking" / "subproject"
@@ -405,8 +401,8 @@ def system_prechecks() -> bool:
     # Download PR information if available
     pull_number = os.environ.get('PULL_NUMBER')
     if pull_number:
-        repo_owner = os.environ.get('REPO_OWNER', 'openshift-psap')
-        repo_name = os.environ.get('REPO_NAME', 'topsail-ng')
+        repo_owner = os.environ.get('REPO_OWNER', DEFAULT_REPO_OWNER)
+        repo_name = os.environ.get('REPO_NAME', DEFAULT_REPO_NAME)
 
         pr_url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/pulls/{pull_number}"
         pr_comments_url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/issues/{pull_number}/comments"
@@ -438,11 +434,11 @@ def setup_environment_variables():
     # Add any environment setup logic here
     logger.debug("Setting up environment variables")
 
-    # Example: Ensure TOPSAIL_HOME is set
-    if not os.environ.get('TOPSAIL_HOME'):
-        topsail_home = Path(__file__).resolve().parent.parent.parent
-        os.environ['TOPSAIL_HOME'] = str(topsail_home)
-        logger.debug(f"Set TOPSAIL_HOME={topsail_home}")
+    # Example: Ensure FORGE_HOME is set
+    if not os.environ.get('FORGE_HOME'):
+        forge_home = Path(__file__).resolve().parent.parent.parent
+        os.environ['FORGE_HOME'] = str(forge_home)
+        logger.debug(f"Set FORGE_HOME={forge_home}")
 
 
 def validate_prerequisites():
@@ -480,16 +476,13 @@ def prepare(verbose: bool = False, project: str = "", operation: str = "", args:
 
     logger.info("Starting CI preparation")
 
-    if topsail_home := os.environ.get("TOPSAIL_HOME"):
-        logger.info(f"Switching to TOPSAIL_HOME={topsail_home} ...")
-        os.chdir(topsail_home)
-    elif os.environ.get("TOPSAIL_LIGHT_IMAGE"):
+    if forge_home := os.environ.get("FORGE_HOME"):
+        logger.info(f"Switching to FORGE_HOME={forge_home} ...")
+        os.chdir(forge_home)
+    elif os.environ.get("FORGE_LIGHT_IMAGE"):
         os.chdir("/app")
 
     try:
-        # Set up ARTIFACT_DIR
-        precheck_artifact_dir()
-
         # Display CI banner
         if project and operation:
             ci_banner(project, operation, args)
@@ -529,6 +522,11 @@ def send_notification(project: str, operation: str, finish_reason: FinishReason,
     if not send_job_completion_notification:
         logger.info("Notifications module not available, skipping notification sending")
         return
+
+    if project == "jump_ci":
+        logger.info("No need to send notification in the JumpCI project")
+        return
+
     try:
         # Determine notification parameters
         success = finish_reason == FinishReason.SUCCESS
@@ -544,7 +542,7 @@ def send_notification(project: str, operation: str, finish_reason: FinishReason,
         slack_notifications = True
 
         # Check for dry run mode
-        dry_run = os.environ.get('TOPSAIL_NOTIFICATION_DRY_RUN', 'false').lower() == 'true'
+        dry_run = os.environ.get('FORGE_NOTIFICATION_DRY_RUN', 'false').lower() == 'true'
 
         logger.info(f"Sending notifications - finish_reason: {finish_reason} | GitHub: {github_notifications}, Slack: {slack_notifications}, dry_run: {dry_run}")
 
@@ -633,8 +631,5 @@ def postchecks(project: str, operation: str, start_time: Optional[float], finish
     # Get the actual step from args (like "test", "lock_cluster", "prepare")
     actual_step = args[0] if args and len(args) > 0 else operation
     send_notification(project, actual_step, finish_reason, duration_str)
-
-    # Properly shutdown dual output to flush all buffers and terminate daemon
-    shutdown_dual_output()
 
     return status

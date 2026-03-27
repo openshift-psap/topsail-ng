@@ -20,6 +20,9 @@ import urllib.error
 
 REQUIRED_AUTHOR_ASSOCIATION = 'CONTRIBUTOR'
 
+DEFAULT_REPO_OWNER = "openshift-psap"
+DEFAULT_REPO_NAME = "topsail-ng"
+
 def setup_logging():
     """Set up logging configuration."""
     logging.basicConfig(
@@ -471,8 +474,9 @@ def main():
 
     try:
         # Get required environment variables
-        repo_owner = os.environ.get('REPO_OWNER') or "openshift-psap"
-        repo_name = os.environ.get('REPO_NAME') or "topsail-ng"
+        repo_owner = os.environ.get('REPO_OWNER') or DEFAULT_REPO_OWNER
+        repo_name = os.environ.get('REPO_NAME') or DEFAULT_REPO_NAME
+
         pull_number_str = os.environ.get('PULL_NUMBER') or 1
 
         if not repo_owner:
@@ -497,12 +501,6 @@ def main():
         test_name = os.environ.get('TEST_NAME') or "jump-ci"
         shared_dir_str = os.environ.get('SHARED_DIR')
         shared_dir = Path(shared_dir_str) if shared_dir_str else None
-
-        # Handle TOPSAIL local CI
-        if os.environ.get('TOPSAIL_LOCAL_CI') == 'true' and not shared_dir:
-            shared_dir = Path('/tmp/shared')
-            logging.info(f"TOPSAIL local CI detected, using SHARED_DIR={shared_dir}")
-            shared_dir.mkdir(parents=True, exist_ok=True)
 
         # Parse PR arguments
         config, found_directives = parse_pr_arguments(

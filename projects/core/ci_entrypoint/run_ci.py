@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-TOPSAIL-NG CI Orchestration Entrypoint
+FORGE CI Orchestration Entrypoint
 
 This script provides the unified entrypoint for CI operations across all projects
-in the TOPSAIL-NG test harness. It follows the constitutional principle of
+in the FORGE test harness. It follows the constitutional principle of
 CI-First Testing by providing consistent, reliable CI integration.
 
 Usage:
@@ -27,7 +27,19 @@ import time
 from pathlib import Path
 from typing import List, Optional
 
-TOPSAIL_HOME = Path(__file__).resolve().parent.parent.parent.parent
+TOPSAIL_ENV = [
+    "TOPSAIL_LIGHT_IMAGE", "TOPSAIL_JUMP_CI_INSIDE_JUMP_HOST", "TOPSAIL_HOME",
+    "TOPSAIL_OPENSHIFT_CI_STEP_DIR",
+    "PSAP_TOPSAIL_JUMP_CI_SECRET_PATH"
+]
+
+for env_name in TOPSAIL_ENV:
+    value = os.environ.get(env_name)
+    if not value: continue
+    os.environ[env_name.replace("TOPSAIL", "FORGE")] = value
+
+
+FORGE_HOME = Path(__file__).resolve().parent.parent.parent.parent
 
 EXTRA_PACKAGES = ["click", "requests"]
 
@@ -92,6 +104,7 @@ def install_extra_packages(packages):
             capture_output=True
         )
         print(f"✅ {'/'.join(packages)} packages installed successfully with uv")
+        print()
     except (FileNotFoundError, subprocess.CalledProcessError):
         # Fallback to pip with user installation
         try:
@@ -101,6 +114,7 @@ def install_extra_packages(packages):
                 capture_output=True
             )
             print(f"✅ {'/'.join(packages)} packages installed successfully with pip")
+            print()
         except subprocess.CalledProcessError as pip_error:
             print(f"❌ Failed to install {'/'.join(packages)}: {pip_error}")
             raise RuntimeError("failed to install the extra packages")
@@ -145,6 +159,9 @@ try:
     import prepare_ci
     logger.info("CI preparation module imported successfully")
 
+    # Set up ARTIFACT_DIR
+    prepare_ci.precheck_artifact_dir()
+
     # Set up dual output as early as possible
     prepare_ci.setup_dual_output()
 
@@ -164,7 +181,7 @@ def find_project_directory(project_name: str) -> Optional[Path]:
         Path to project directory if found, None otherwise
     """
     # Look in the projects directory
-    projects_dir = TOPSAIL_HOME / "projects"
+    projects_dir = FORGE_HOME / "projects"
     project_dir = projects_dir / project_name
 
     if project_dir.exists() and project_dir.is_dir():
@@ -202,7 +219,7 @@ def find_ci_script(project_dir: Path, operation: str) -> Optional[Path]:
 def get_available_projects() -> List[str]:
     """Get list of available projects."""
 
-    projects_dir = TOPSAIL_HOME / "projects"
+    projects_dir = FORGE_HOME / "projects"
 
     if not projects_dir.exists():
         return []
@@ -214,7 +231,10 @@ def get_available_projects() -> List[str]:
         if proj_dir.name.startswith('.'):
             continue
 
-        projects.append(proj_dir.name)
+        # Only include projects that have an orchestration directory
+        orchestration_dir = proj_dir / "orchestration"
+        if orchestration_dir.exists() and orchestration_dir.is_dir():
+            projects.append(proj_dir.name)
 
     return sorted(projects)
 
@@ -232,6 +252,7 @@ def list_projects():
         project_dir = find_project_directory(project)
         ci_script = find_ci_script(project_dir, "ci")
         status = "✅" if ci_script else "⚠️"
+
         click.echo(f"   {status} {project}")
 
     click.echo()
@@ -336,10 +357,12 @@ def parse_cli_help(help_output: str) -> List[str]:
 def execute_project_operation(project: str, operation: str, args: tuple, verbose: bool, dry_run: bool):
     """Execute a project operation."""
     if verbose:
-        click.echo(f"🚀 TOPSAIL-NG CI Orchestration")
+        click.echo("")
+        click.echo(f"🚀 FORGE CI Orchestration")
         click.echo(f"Project: {project}")
         click.echo(f"Operation: {operation}")
         click.echo(f"Arguments: {list(args)}")
+        click.echo("")
 
     # Execute CI preparation tasks
     if prepare_ci:
@@ -411,8 +434,10 @@ def execute_project_operation(project: str, operation: str, args: tuple, verbose
         return
 
     # Execute the command
-    click.echo(f"▶️  Executing {project} {operation} {' '.join(args)}")
-    click.echo(" ".join(cmd))
+    click.echo("")
+    click.echo(f"▶️  Executing {project} {operation} {' '.join(args)} | {' '.join(cmd)}")
+    click.echo("")
+
     try:
         # Track start time for duration calculation
         start_time = time.time()
@@ -425,7 +450,9 @@ def execute_project_operation(project: str, operation: str, args: tuple, verbose
             stdout=None,  # Inherit stdout for pdb/debugging
             stderr=None   # Inherit stderr for pdb/debugging
         )
-        click.echo(f"▶️  Executing {project} {operation} {' '.join(args)} --> {result.returncode}")
+        click.echo()
+        click.echo(f"▶️  Execution of {project} {operation} {' '.join(args)} returned {result.returncode}")
+        click.echo()
 
         finish_reason = prepare_ci.FinishReason.SUCCESS if result.returncode == 0 \
             else prepare_ci.FinishReason.ERROR
@@ -442,7 +469,14 @@ def execute_project_operation(project: str, operation: str, args: tuple, verbose
                 msg = click.style(f"✅ {project} {operation} completed successfully", fg='green')
             else:
                 msg = click.style(f"❌ {project} {operation} failed with exit code {result.returncode}", fg='red')
+
+        click.echo()
         click.echo(msg, err=not success)
+
+        if prepare_ci:
+            # Properly shutdown dual output to flush all buffers and terminate daemon
+            prepare_ci.shutdown_dual_output()
+
         sys.exit(result.returncode)
 
     except Exception as e:
@@ -466,11 +500,11 @@ def execute_project_operation(project: str, operation: str, args: tuple, verbose
 @click.argument('project', required=False)
 @click.argument('operation', required=False)
 @click.argument('args', nargs=-1)
-@click.option('--verbose', '-v', is_flag=True, help='Enable verbose output')
+@click.option('--verbose', '-v', is_flag=True, help='Enable verbose output', default=True)
 @click.option('--dry-run', is_flag=True, help='Show what would be executed without running it')
 def main(project, operation, args, verbose, dry_run):
     """
-    TOPSAIL-NG CI Orchestration Entrypoint.
+    FORGE CI Orchestration Entrypoint.
 
     \b
     Usage:
@@ -484,6 +518,7 @@ def main(project, operation, args, verbose, dry_run):
         run llm-d test
         run skeleton validate
     """
+
     # No arguments - list projects
     if not project:
         list_projects()

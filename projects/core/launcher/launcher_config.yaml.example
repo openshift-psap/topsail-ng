@@ -1,12 +1,12 @@
-# TOPSAIL Launcher Configuration
+# FORGE Launcher Configuration
 # Copy this file to launcher_config.yaml and customize as needed
 
-topsail_home: "~/topsail-ng"
-topsail_toolbox_name: "topsail-ng"  # Container name for toolbox
-topsail_toolbox_command: "bash"
-container_image: "localhost/topsail-ng:latest"
-container_file: "projects/core/image/Containerfile" 
-topsail_image_extra_pkg: "vim git-core"
+forge_home: "~/forge"
+forge_toolbox_name: "forge"  # Container name for toolbox
+forge_toolbox_command: "bash"
+container_image: "localhost/forge:latest"
+container_file: "projects/core/image/Containerfile"
+forge_image_extra_pkg: "vim git-core"
 
 # Environment variables to export from current environment to the container
 exported_env_vars:
@@ -17,4 +17,3 @@ exported_env_vars:
 custom_env_vars:
   # CUSTOM_CONFIG: "production"
   # DEBUG_LEVEL: "verbose"
-

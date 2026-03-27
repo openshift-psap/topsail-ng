@@ -1,10 +1,10 @@
-# TOPSAIL Python Launcher
+# FORGE Python Launcher
 
-A modern Python/Click alternative to the bash launcher scripts, providing containerized development environment management for TOPSAIL using Toolbx and Podman.
+A modern Python/Click alternative to the bash launcher scripts, providing containerized development environment management for FORGE using Toolbx and Podman.
 
 ## Overview
 
-This Python launcher (`topsail_launcher.py`) provides the same functionality as the original bash scripts but with enhanced features:
+This Python launcher (`forge_launcher.py`) provides the same functionality as the original bash scripts but with enhanced features:
 
 - **Unified CLI**: Single command with subcommands instead of multiple scripts
 - **Configurable environment**: YAML-based configuration with sensible defaults
@@ -25,13 +25,13 @@ cp launcher_config.yaml.example launcher_config.yaml
 Edit `launcher_config.yaml` to match your environment:
 
 ```yaml
-# TOPSAIL Launcher Configuration
-topsail_home: "/path/to/your/topsail-ng"
-topsail_toolbox_name: "topsail-ng"
-topsail_toolbox_command: "zsh"  # or "bash"
-container_image: "localhost/topsail-ng:latest"
-container_file: "projects/core/image/Containerfile"  # Relative to topsail_home
-topsail_image_extra_pkg: "vim git-core zsh"
+# FORGE Launcher Configuration
+forge_home: "/path/to/your/forge"
+forge_toolbox_name: "forge"
+forge_toolbox_command: "zsh"  # or "bash"
+container_image: "localhost/forge:latest"
+container_file: "projects/core/image/Containerfile"  # Relative to forge_home
+forge_image_extra_pkg: "vim git-core zsh"
 
 # Environment variables exported from current environment to container
 exported_env_vars:
@@ -42,7 +42,7 @@ exported_env_vars:
 
 # Custom environment variables (key/value pairs) to set in the container
 custom_env_vars:
-  ARTIFACT_DIR: "/tmp/topsail-artifacts"
+  ARTIFACT_DIR: "/tmp/forge-artifacts"
   CUSTOM_CONFIG: "production"
   DEBUG_LEVEL: "verbose"
 ```
@@ -53,27 +53,27 @@ custom_env_vars:
 
 ```bash
 # Check current status
-./topsail_launcher.py status
+./forge_launcher.py status
 
 # Build the container image
-./topsail_launcher.py build
+./forge_launcher.py build
 
 # Create/recreate the toolbox container
-./topsail_launcher.py recreate
+./forge_launcher.py recreate
 
 # Verify everything is ready
-./topsail_launcher.py status
+./forge_launcher.py status
 ```
 
 ### 3. Start Development
 
 ```bash
 # Enter the development environment
-./topsail_launcher.py enter
+./forge_launcher.py enter
 
-# Run TOPSAIL commands
-./topsail_launcher.py run llm-d prepare
-./topsail_launcher.py run llm-d test
+# Run FORGE commands
+./forge_launcher.py run llm-d prepare
+./forge_launcher.py run llm-d test
 ```
 
 ## Command Reference
@@ -82,11 +82,11 @@ custom_env_vars:
 
 | Command | Description | Bash Equivalent |
 |---------|-------------|------------------|
-| `build` | Build container image | `./topsail_build` |
+| `build` | Build container image | `./forge_build` |
 | `recreate` | Recreate toolbox container | `./recreate` |
-| `enter` | Enter development environment | `./topsail_enter` |
-| `run` | Run TOPSAIL commands | `./topsail_run` |
-| `run-cmd` | Run toolbox commands | `./topsail_run_cmd` |
+| `enter` | Enter development environment | `./forge_enter` |
+| `run` | Run FORGE commands | `./forge_run` |
+| `run-cmd` | Run toolbox commands | `./forge_run_cmd` |
 
 ### Utility Commands
 
@@ -102,39 +102,39 @@ custom_env_vars:
 
 ```bash
 # Build with extra packages
-./topsail_launcher.py build --extra-packages vim htop
+./forge_launcher.py build --extra-packages vim htop
 
 # Enter environment in current directory
-./topsail_launcher.py enter --here
+./forge_launcher.py enter --here
 
 # Run specific command in container
-./topsail_launcher.py enter "pytest tests/"
+./forge_launcher.py enter "pytest tests/"
 
 # Check what environment variables will be exported
-./topsail_launcher.py --verbose enter "env | grep TOPSAIL"
+./forge_launcher.py --verbose enter "env | grep FORGE"
 
 # Update configuration
-./topsail_launcher.py config --set topsail_toolbox_command zsh
-./topsail_launcher.py config --set container_image my-custom-image:latest
+./forge_launcher.py config --set forge_toolbox_command zsh
+./forge_launcher.py config --set container_image my-custom-image:latest
 
 # Set custom environment variables
-./topsail_launcher.py config --set-env ARTIFACT_DIR /tmp/my-artifacts
-./topsail_launcher.py config --set-env DEBUG_LEVEL verbose
+./forge_launcher.py config --set-env ARTIFACT_DIR /tmp/my-artifacts
+./forge_launcher.py config --set-env DEBUG_LEVEL verbose
 
 # Edit config file directly
-./topsail_launcher.py config --edit
+./forge_launcher.py config --edit
 ```
 
 ## Configuration Options
 
 ### Core Settings
 
-- **`topsail_home`**: Path to TOPSAIL repository
+- **`forge_home`**: Path to FORGE repository
 - **`container_image`**: Image name for build and run operations
-- **`container_file`**: Path to Containerfile (relative to `topsail_home`)
-- **`topsail_toolbox_name`**: Container name for toolbox
-- **`topsail_toolbox_command`**: Default shell command (bash/zsh)
-- **`topsail_image_extra_pkg`**: Extra packages to install during build
+- **`container_file`**: Path to Containerfile (relative to `forge_home`)
+- **`forge_toolbox_name`**: Container name for toolbox
+- **`forge_toolbox_command`**: Default shell command (bash/zsh)
+- **`forge_image_extra_pkg`**: Extra packages to install during build
 
 ### Environment Variables
 
@@ -161,7 +161,7 @@ The `custom_env_vars` dictionary allows you to set specific key/value pairs dire
 
 ```yaml
 custom_env_vars:
-  ARTIFACT_DIR: "/tmp/topsail-artifacts"
+  ARTIFACT_DIR: "/tmp/forge-artifacts"
   CUSTOM_CONFIG: "production"
   DEBUG_LEVEL: "verbose"
   API_ENDPOINT: "https://api.example.com"
@@ -173,11 +173,11 @@ These variables are set regardless of your current environment.
 
 ```bash
 # Set a custom environment variable
-./topsail_launcher.py config --set-env ARTIFACT_DIR /tmp/my-artifacts
-./topsail_launcher.py config --set-env DEBUG_LEVEL verbose
+./forge_launcher.py config --set-env ARTIFACT_DIR /tmp/my-artifacts
+./forge_launcher.py config --set-env DEBUG_LEVEL verbose
 
 # View current environment variables
-./topsail_launcher.py config
+./forge_launcher.py config
 ```
 
 ## Verbose Mode
@@ -185,9 +185,9 @@ These variables are set regardless of your current environment.
 Use `-v` or `--verbose` to see detailed execution information:
 
 ```bash
-./topsail_launcher.py --verbose status
-./topsail_launcher.py --verbose build
-./topsail_launcher.py --verbose enter "make test"
+./forge_launcher.py --verbose status
+./forge_launcher.py --verbose build
+./forge_launcher.py --verbose enter "make test"
 ```
 
 Verbose mode shows:
@@ -201,18 +201,18 @@ Verbose mode shows:
 The `status` command provides comprehensive environment validation:
 
 ```bash
-./topsail_launcher.py status
+./forge_launcher.py status
 ```
 
 **Sample output:**
 ```
-📊 TOPSAIL Development Environment Status:
+📊 FORGE Development Environment Status:
 
 🔧 Toolbox: ✅ Available
-📁 topsail_home: ✅ Found at /path/to/topsail-ng
-📦 Container Image: ✅ localhost/topsail-ng:latest available
-🏗️  Container: ✅ topsail-ng exists
-🐳 Containerfile: ✅ Found at /path/to/topsail-ng/projects/core/image/Containerfile
+📁 forge_home: ✅ Found at /path/to/forge
+📦 Container Image: ✅ localhost/forge:latest available
+🏗️  Container: ✅ forge exists
+🐳 Containerfile: ✅ Found at /path/to/forge/projects/core/image/Containerfile
 
 🚀 Status: ✅ Ready for development!
    💡 Use 'enter' to start working
@@ -224,12 +224,12 @@ The `status` command provides comprehensive environment validation:
 
 **Container image not found:**
 ```bash
-./topsail_launcher.py build
+./forge_launcher.py build
 ```
 
 **Container doesn't exist:**
 ```bash
-./topsail_launcher.py recreate
+./forge_launcher.py recreate
 ```
 
 **Toolbox not available:**
@@ -243,8 +243,8 @@ Ensure your user is in the appropriate groups for container operations.
 Use verbose mode to see exactly what commands are being executed:
 
 ```bash
-./topsail_launcher.py --verbose build
-./topsail_launcher.py --verbose enter "your-command"
+./forge_launcher.py --verbose build
+./forge_launcher.py --verbose enter "your-command"
 ```
 
 ### Configuration Issues
@@ -252,24 +252,24 @@ Use verbose mode to see exactly what commands are being executed:
 Check your current configuration:
 
 ```bash
-./topsail_launcher.py config
+./forge_launcher.py config
 ```
 
 Edit configuration directly:
 
 ```bash
 # Open config file in your default editor
-./topsail_launcher.py config --edit
+./forge_launcher.py config --edit
 
 # Or edit specific settings via CLI
-./topsail_launcher.py config --set topsail_home /new/path
-./topsail_launcher.py config --set-env CUSTOM_VAR value
+./forge_launcher.py config --set forge_home /new/path
+./forge_launcher.py config --set-env CUSTOM_VAR value
 ```
 
 Verify paths exist and are correct:
 
 ```bash
-ls -la $(./topsail_launcher.py config | grep topsail_home | cut -d: -f2 | tr -d ' ')
+ls -la $(./forge_launcher.py config | grep forge_home | cut -d: -f2 | tr -d ' ')
 ```
 
 **Note**: The configuration file `launcher_config.yaml` is automatically ignored by git, so you can safely store personal paths and credentials.
@@ -280,12 +280,12 @@ The Python launcher is designed as a drop-in replacement:
 
 | Bash Script | Python Equivalent |
 |-------------|-------------------|
-| `./topsail_build` | `./topsail_launcher.py build` |
-| `./topsail_enter` | `./topsail_launcher.py enter` |
-| `./topsail_enter here` | `./topsail_launcher.py enter --here` |
-| `./topsail_run <args>` | `./topsail_launcher.py run <args>` |
-| `./topsail_run_cmd <args>` | `./topsail_launcher.py run-cmd <args>` |
-| `./recreate <name> <image>` | `./topsail_launcher.py recreate` |
+| `./forge_build` | `./forge_launcher.py build` |
+| `./forge_enter` | `./forge_launcher.py enter` |
+| `./forge_enter here` | `./forge_launcher.py enter --here` |
+| `./forge_run <args>` | `./forge_launcher.py run <args>` |
+| `./forge_run_cmd <args>` | `./forge_launcher.py run-cmd <args>` |
+| `./recreate <name> <image>` | `./forge_launcher.py recreate` |
 
 ### Benefits of Python Launcher
 
@@ -305,7 +305,7 @@ The Python launcher is designed as a drop-in replacement:
 
 ## Constitutional Compliance
 
-This launcher follows TOPSAIL-NG's constitutional principles:
+This launcher follows FORGE's constitutional principles:
 
 - **CI-First Testing**: Consistent containerized development environment
 - **Reproducible Results**: Locked container configuration and environment

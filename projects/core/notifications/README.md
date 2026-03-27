@@ -1,4 +1,4 @@
-# TOPSAIL-NG Notifications Integration
+# FORGE Notifications Integration
 
 This directory contains the notifications system that integrates with the run_ci entrypoint to send success/failure notifications.
 
@@ -21,8 +21,8 @@ The notifications are automatically triggered from `projects/core/ci_entrypoint/
 
 ### Environment Variables
 
-- `TOPSAIL_NOTIFICATION_DRY_RUN=true/false`: Enable dry run mode (shows what would be sent without actually sending)
-- `TOPSAIL_ENABLE_SLACK_NOTIFICATIONS=true/false`: Enable/disable Slack notifications (default: false)
+- `FORGE_NOTIFICATION_DRY_RUN=true/false`: Enable dry run mode (shows what would be sent without actually sending)
+- `FORGE_ENABLE_SLACK_NOTIFICATIONS=true/false`: Enable/disable Slack notifications (default: false)
 - GitHub notifications are enabled by default when appropriate secrets are available
 
 ### Required Secrets
@@ -42,7 +42,7 @@ The system looks for secret files in directories specified by these environment 
 ### Enable Slack Notifications
 
 ```bash
-export TOPSAIL_ENABLE_SLACK_NOTIFICATIONS=true
+export FORGE_ENABLE_SLACK_NOTIFICATIONS=true
 run my_project test
 ```
 

@@ -501,10 +501,11 @@ def status(ctx):
 @cli.command()
 @click.option('--set', 'set_config', nargs=2, metavar='KEY VALUE', help='Set a configuration value')
 @click.option('--set-env', 'set_env', nargs=2, metavar='VAR VALUE', help='Set a custom environment variable')
+@click.option('--pass-env', 'pass_env', metavar='VAR', help='Add environment variable to exported list')
 @click.option('--edit', is_flag=True, help='Edit configuration file with $EDITOR')
 @click.pass_context
-def config(ctx, set_config, set_env, edit):
-    """Show current configuration, set a configuration value, or edit the config file."""
+def config(ctx, set_config, set_env, pass_env, edit):
+    """Show current configuration, set values, manage environment variables, or edit the config file."""
     launcher = ctx.obj['launcher']
 
     if edit:
@@ -528,7 +529,7 @@ def config(ctx, set_config, set_env, edit):
             sys.exit(1)
         return
 
-    if set_config or set_env:
+    if set_config or set_env or pass_env:
         # Load existing config
         config = {}
         if CONFIG_FILE.exists():
@@ -538,13 +539,25 @@ def config(ctx, set_config, set_env, edit):
             except Exception:
                 config = {}
 
-        # Ensure custom_env_vars exists in config
+        # Ensure custom_env_vars and exported_env_vars exist in config
         if 'custom_env_vars' not in config:
             config['custom_env_vars'] = {}
+        if 'exported_env_vars' not in config:
+            config['exported_env_vars'] = []
+
+        success_msg = ""
 
         if set_config:
             # Set regular configuration
             key, value = set_config
+
+            # Validate that the key exists in the current config schema
+            if key not in launcher.config:
+                valid_keys = list(launcher.config.keys())
+                click.echo(f"❌ Invalid config key '{key}'. Valid keys are: {', '.join(sorted(valid_keys))}", err=True)
+                click.echo(f"💡 For environment variables, use: config --set-env {key} {value}", err=True)
+                sys.exit(1)
+
             config[key] = value
             success_msg = f"✅ Set {key} = {value}"
 
@@ -553,6 +566,14 @@ def config(ctx, set_config, set_env, edit):
             var, value = set_env
             config['custom_env_vars'][var] = value
             success_msg = f"✅ Set environment variable {var} = {value}"
+
+        if pass_env:
+            # Add environment variable to exported list
+            if pass_env not in config['exported_env_vars']:
+                config['exported_env_vars'].append(pass_env)
+                success_msg = f"✅ Added {pass_env} to exported environment variables"
+            else:
+                success_msg = f"ℹ️  {pass_env} is already in exported environment variables"
 
         # Save config
         try:
@@ -566,6 +587,7 @@ def config(ctx, set_config, set_env, edit):
     else:
         # Show configuration
         click.echo("📋 Current TOPSAIL Launcher Configuration:")
+        click.echo(f"📄 Config file: {CONFIG_FILE}")
         click.echo()
 
         for key, value in launcher.config.items():
@@ -591,9 +613,10 @@ def config(ctx, set_config, set_env, edit):
 
         click.echo()
         click.echo("💡 Usage examples:")
-        click.echo("   config --set topsail_home /path/to/topsail")
-        click.echo("   config --set-env CUSTOM_VAR custom_value")
-        click.echo("   config --edit")
+        click.echo("   config --set topsail_home /path/to/topsail      # Config settings")
+        click.echo("   config --set-env CUSTOM_VAR custom_value        # Custom env vars")
+        click.echo("   config --pass-env MY_TOKEN                      # Export host env var")
+        click.echo("   config --edit                                   # Edit config file")
 
 
 

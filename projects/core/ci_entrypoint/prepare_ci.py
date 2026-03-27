@@ -491,9 +491,6 @@ def prepare(verbose: bool = False, project: str = "", operation: str = "", args:
         os.chdir("/app")
 
     try:
-        # Set up ARTIFACT_DIR
-        precheck_artifact_dir()
-
         # Display CI banner
         if project and operation:
             ci_banner(project, operation, args)
@@ -642,8 +639,5 @@ def postchecks(project: str, operation: str, start_time: Optional[float], finish
     # Get the actual step from args (like "test", "lock_cluster", "prepare")
     actual_step = args[0] if args and len(args) > 0 else operation
     send_notification(project, actual_step, finish_reason, duration_str)
-
-    # Properly shutdown dual output to flush all buffers and terminate daemon
-    shutdown_dual_output()
 
     return status

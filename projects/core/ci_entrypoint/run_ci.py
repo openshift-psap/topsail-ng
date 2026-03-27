@@ -145,6 +145,9 @@ try:
     import prepare_ci
     logger.info("CI preparation module imported successfully")
 
+    # Set up ARTIFACT_DIR
+    prepare_ci.precheck_artifact_dir()
+
     # Set up dual output as early as possible
     prepare_ci.setup_dual_output()
 
@@ -446,6 +449,11 @@ def execute_project_operation(project: str, operation: str, args: tuple, verbose
             else:
                 msg = click.style(f"❌ {project} {operation} failed with exit code {result.returncode}", fg='red')
         click.echo(msg, err=not success)
+
+        if prepare_ci:
+            # Properly shutdown dual output to flush all buffers and terminate daemon
+            prepare_ci.shutdown_dual_output()
+
         sys.exit(result.returncode)
 
     except Exception as e:

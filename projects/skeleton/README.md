@@ -1,10 +1,10 @@
 # Skeleton Project
 
-This is a template/skeleton project that demonstrates how to create a new project within the **TOPSAIL-NG** test harness framework.
+This is a template/skeleton project that demonstrates how to create a new project within the **FORGE** test harness framework.
 
 ## Overview
 
-This skeleton shows the essential structure and patterns for building projects that comply with TOPSAIL-NG's constitutional principles:
+This skeleton shows the essential structure and patterns for building projects that comply with FORGE's constitutional principles:
 
 - **CI-First Testing**: Structured phases ensure consistent CI integration
 - **Observable Measurements**: Command execution logging and timing
@@ -29,7 +29,7 @@ skeleton/
 ### 1. Run Individual Phases
 
 ```bash
-# From the TOPSAIL-NG root directory
+# From the FORGE root directory
 
 # Prepare environment
 ./run_ci skeleton ci prepare
@@ -218,7 +218,7 @@ The skeleton uses Click groups to organize commands:
 @click.option('--verbose', '-v', is_flag=True, help='Enable verbose output')
 @click.pass_context
 def cli(ctx, verbose):
-    """Project CI Operations for TOPSAIL-NG."""
+    """Project CI Operations for FORGE."""
     ctx.ensure_object(types.SimpleNamespace)
     ctx.obj.verbose = verbose
     ctx.obj.runner = YourProjectTestRunner(verbose)
@@ -300,6 +300,5 @@ The skeleton is designed for easy CI integration:
 ## Support
 
 - Review other projects in `projects/` for more examples
-- Check the main TOPSAIL-NG documentation
+- Check the main FORGE documentation
 - Study the run_ci entrypoint code in `projects/core/ci_entrypoint/`
-

@@ -3,7 +3,7 @@
 Skeleton Example Project CI Operations
 
 This is a skeleton/template project that demonstrates how to create a new project
-within the TOPSAIL-NG test harness framework. Use this as a starting point for
+within the FORGE test harness framework. Use this as a starting point for
 building your own projects.
 
 Constitutional Compliance:
@@ -189,7 +189,7 @@ class SkeletonTestRunner:
 @click.option('--verbose', '-v', is_flag=True, help='Enable verbose output')
 @click.pass_context
 def cli(ctx, verbose):
-    """Skeleton Example Project CI Operations for TOPSAIL-NG."""
+    """Skeleton Example Project CI Operations for FORGE."""
     ctx.ensure_object(types.SimpleNamespace)
     ctx.obj.verbose = verbose
     ctx.obj.runner = SkeletonTestRunner(verbose)

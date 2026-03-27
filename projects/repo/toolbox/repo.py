@@ -9,7 +9,6 @@ import logging
 
 TOOLBOX_THIS_DIR = pathlib.Path(__file__).absolute().parent
 PROJECT_DIR = TOOLBOX_THIS_DIR.parent
-TOPSAIL_DIR = TOOLBOX_THIS_DIR.parent.parent.parent
 
 logger = logging.getLogger(__name__)
 

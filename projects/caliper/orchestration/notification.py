@@ -24,62 +24,63 @@ def format_postprocess_status_notification(
     Returns:
         Formatted notification text to include in GitHub notification
     """
-    if not status:
-        return ""
+
+    if not status or not status.steps:
+        return []
 
     lines = []
 
     # Check overall status (keep unchanged regardless of abort status)
     status_emoji = "✅" if status.is_success() else "❌"
-    lines.append(f"**Post-processing Status** {status_emoji}")
+    base_directory = status.base_directory
+    if base_directory.name == "status_files":
+        base_directory = base_directory.parent
 
-    # Add steps information if available, sorted by completion time
-    if status.steps:
-        # Convert steps from list[dict] format to sorted list of (step_name, step_data) tuples
-        step_tuples = []
-        for step_dict in status.steps:
-            for step_name, step_data in step_dict.items():
-                step_tuples.append((step_name, step_data))
+    lines.append(f"**Post-processing Status** {status_emoji} `{base_directory}`")
 
-        # Sort by completion timestamp, with fallback to step name for stable ordering
-        sorted_steps = sorted(
-            step_tuples,
-            key=lambda item: (
-                item[1].get("completed_at", 0) or 0,  # Use completed_at if available, else 0
-                item[0],  # fallback to step name for stable ordering
-            ),
-        )
+    # Convert steps from list[dict] format to sorted list of (step_name, step_data) tuples
+    step_tuples = []
+    for step_dict in status.steps:
+        for step_name, step_data in step_dict.items():
+            step_tuples.append((step_name, step_data))
 
-        for step_name, step_data in sorted_steps:
-            step_emoji = _get_step_emoji(step_data.get("status", "unknown"))
+    # Sort by completion timestamp, with fallback to step name for stable ordering
+    sorted_steps = sorted(
+        step_tuples,
+        key=lambda item: (
+            item[1].get("completed_at", 0) or 0,  # Use completed_at if available, else 0
+            item[0],  # fallback to step name for stable ordering
+        ),
+    )
 
-            # Create step name as link to log file if available
-            log_file = step_data.get("log_file")
-            if log_file and get_file_link:
-                try:
-                    log_url = get_file_link(log_file)
-                    step_name_display = f"[**{step_name}**]({log_url})"
-                except Exception:
-                    # Fallback to plain text if link generation fails
-                    step_name_display = f"**{step_name}**"
-            else:
+    for step_name, step_data in sorted_steps:
+        step_emoji = _get_step_emoji(step_data.get("status", "unknown"))
+
+        # Create step name as link to log file if available
+        log_file = step_data.get("log_file")
+        if log_file and get_file_link:
+            try:
+                log_url = get_file_link(log_file)
+                step_name_display = f"[**{step_name}**]({log_url})"
+            except Exception:
+                # Fallback to plain text if link generation fails
                 step_name_display = f"**{step_name}**"
+        else:
+            step_name_display = f"**{step_name}**"
 
-            # Format step with message if available
-            lines.append(
-                f"- {step_emoji} {step_name_display}: `{step_data.get('status', 'unknown')}`"
-            )
-            message = step_data.get("message")
-            if message:
-                lines.append(f"  * `{message}`")
+        # Format step with message if available
+        lines.append(f"- {step_emoji} {step_name_display}: `{step_data.get('status', 'unknown')}`")
+        message = step_data.get("message")
+        if message:
+            lines.append(f"  * `{message}`")
 
-            reason = step_data.get("reason")
-            if reason:
-                lines.append(f"  * `{reason}`")
+        reason = step_data.get("reason")
+        if reason:
+            lines.append(f"  * `{reason}`")
 
-            # Use object-oriented step formatter to handle step-specific details
-            step_details = _format_step_details_with_formatters(step_name, step_data, get_file_link)
-            lines.extend(step_details)
+        # Use object-oriented step formatter to handle step-specific details
+        step_details = _format_step_details_with_formatters(step_name, step_data, get_file_link)
+        lines.extend(step_details)
 
     return "\n".join(lines) if lines else ""
 

@@ -166,40 +166,60 @@ class Config:
             logger.fatal(msg)
             raise ValueError(msg)
 
-        for key, value in variable_overrides.items():
-            MAGIC_DEFAULT_VALUE = object()
-            handled_secretly = True  # current_value MUST NOT be printed below.
-            current_value = self.get_config(
-                key,
-                MAGIC_DEFAULT_VALUE,
-                print=False,
-                warn=False,
-                handled_secretly=handled_secretly,
-            )
-            if current_value == MAGIC_DEFAULT_VALUE:
-                try:
-                    # Try to create the key if parent exists and is a dict
-                    self._create_first_parent_config_key(key, value)
-                    self.save_config()
-                except ValueError:
-                    if not ignore_not_found:
-                        raise
+        # Setup presets_applied.txt file for writing variable overrides
+        dest_txt = env.ARTIFACT_DIR / CI_METADATA_DIRNAME / "presets_applied.txt"
+        dest_txt.parent.mkdir(parents=True, exist_ok=True)
 
+        # Collect all override messages to write to file once
+        file_messages = []
+
+        try:
+            for key, value in variable_overrides.items():
+                MAGIC_DEFAULT_VALUE = object()
+                handled_secretly = True  # current_value MUST NOT be printed below.
+                current_value = self.get_config(
+                    key,
+                    MAGIC_DEFAULT_VALUE,
+                    print=False,
+                    warn=False,
+                    handled_secretly=handled_secretly,
+                )
+                if current_value == MAGIC_DEFAULT_VALUE:
+                    try:
+                        # Try to create the key if parent exists and is a dict
+                        self._create_first_parent_config_key(key, value)
+                        self.save_config()
+                    except ValueError:
+                        if not ignore_not_found:
+                            raise
+
+                        if log:
+                            msg = f"config override IGNORED: {key} --> {value}"
+                            logger.info(msg)
+                            file_messages.append(msg)
+                        continue
+
+                    self.save_config()
                     if log:
-                        logger.info(f"config override IGNORED: {key} --> {value}")
+                        msg = f"config override (new key): {key} --> {value}"
+                        logger.info(msg)
+                        file_messages.append(msg)
                     continue
 
-                self.save_config()
+                self.set_config(key, value, print=False)
+                actual_value = self.get_config(
+                    key, print=False
+                )  # ensure that key has been set, raises an exception otherwise
                 if log:
-                    logger.info(f"config override (new key): {key} --> {value}")
-                continue
-
-            self.set_config(key, value, print=False)
-            actual_value = self.get_config(
-                key, print=False
-            )  # ensure that key has been set, raises an exception otherwise
-            if log:
-                logger.info(f"config override: {key} --> {actual_value}")
+                    msg = f"config override: {key} --> {actual_value}"
+                    logger.info(msg)
+                    file_messages.append(msg)
+        finally:
+            # Write all collected messages to file, even if processing failed
+            if file_messages:
+                with open(dest_txt, "a") as f:
+                    for msg in file_messages:
+                        print(msg, file=f)
 
     def apply_preset(self, name):
         values = self.get_preset(name)
@@ -210,6 +230,9 @@ class Config:
         dest_txt = env.ARTIFACT_DIR / CI_METADATA_DIRNAME / "presets_applied.txt"
         dest_txt.parent.mkdir(parents=True, exist_ok=True)
 
+        # Collect preset messages to write to file once
+        preset_messages = []
+
         for key, value in values.items():
             if key == "extends":
                 for extend_name in value or []:
@@ -218,11 +241,15 @@ class Config:
 
             msg = f"preset[{name}] {key} --> {value}"
             logger.info(msg)
-
-            with open(dest_txt, "a") as f:
-                print(msg, file=f)
+            preset_messages.append(msg)
 
             self.set_config(key, value, print=False)
+
+        # Write all collected preset messages to file once
+        if preset_messages:
+            with open(dest_txt, "a") as f:
+                for msg in preset_messages:
+                    print(msg, file=f)
 
     def load_presets(self, preset_dir):
         for preset_file in preset_dir.glob("*.yaml"):

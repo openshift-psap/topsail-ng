@@ -122,16 +122,15 @@ def send_notification(
     duration_str = _extract_duration_from_status(status)
 
     # Build enhanced notification with fournos job info and artifact links
-    notification_status = _build_enhanced_notification(
+    notification_status, notification_success = _build_enhanced_notification(
         artifact_dir, project, finish_reason, duration_str, status
     )
 
     # Send actual notifications
-    notification_success = True
     if dry_run:
         logger.info(f"DRY RUN: Would send notification: {project} {finish_reason}{duration_str}")
         logger.info(f"DRY RUN: Notification content:\n{notification_status}")
-        return True  # Dry run is considered success
+        return notification_success
     else:
         logger.info(f"Sending notification: {project} {finish_reason}{duration_str}")
 
@@ -474,6 +473,7 @@ def _process_caliper_postprocess_status(
             if mlflow_run_url:
                 # Use base_directory from status data for MLflow URL construction
                 base_directory = result.base_directory
+
                 if base_directory:
                     # Calculate path relative to BASE_ARTIFACT_DIR.parent
                     # e.g., "/workspace/artifacts/000__replot/postprocess_output" -> "000__replot/postprocess_output"
@@ -509,41 +509,39 @@ def _process_caliper_postprocess_status(
             raise
 
 
-def _process_notification_files(step_dir: Path, step_log_links: list[str]) -> None:
+def _process_notification_files(step_dir: Path) -> None:
     """Process notification files from step directory."""
     notifications_dir = step_dir / CI_METADATA_DIRNAME / "notifications"
     if not (notifications_dir.exists() and notifications_dir.is_dir()):
-        return
+        return []
 
     import re
 
+    notifications_from_files = []
     for notification_file in sorted(notifications_dir.glob("*.txt")):
-        try:
-            with open(notification_file, encoding="utf-8") as f:
-                content = f.read().strip()
+        with open(notification_file, encoding="utf-8") as f:
+            content = f.read().strip()
 
-            if not content:
-                continue
-
-            subtitle = notification_file.stem.replace("__", " ").replace("_", " ").title()
-            subtitle = re.sub(r"^\d+\s+", "", subtitle)
-            step_log_links.append(f"##### {subtitle}")
-
-            for line in content.splitlines():
-                step_log_links.append(f"> {line}")
-
-        except Exception as file_error:
-            logger.warning(f"Failed to read notification file {notification_file}: {file_error}")
+        if not content:
             continue
 
+        subtitle = notification_file.stem.replace("__", " ").replace("_", " ").title()
+        subtitle = re.sub(r"^\d+\s+", "", subtitle)
+        notifications_from_files.append(f"##### {subtitle}")
 
-def _process_step_logs(artifact_dir: Path, mlflow_run_url: str) -> list[str]:
+        for line in content.splitlines():
+            notifications_from_files.append(f"> {line}")
+
+    return notifications_from_files
+
+
+def _process_step_status(artifact_dir: Path, mlflow_run_url: str) -> list[str]:
     """Process step logs from parent directory."""
 
     if not mlflow_run_url:
         logging.warning("mlflow_run_url not set. Will generate dummy links.")
 
-    step_log_links = []
+    step_status = []
 
     current_step_name = Path(env.BASE_ARTIFACT_DIR).name
 
@@ -557,29 +555,39 @@ def _process_step_logs(artifact_dir: Path, mlflow_run_url: str) -> list[str]:
         if not run_log.exists():
             continue
 
-        try:
-            mlflow_log_url = _create_mlflow_url(mlflow_run_url, step_dir.name)
-            if not mlflow_log_url:
-                continue
+        mlflow_log_url = _create_mlflow_url(mlflow_run_url, step_dir.name)
+        if not mlflow_log_url:
+            mlflow_log_url = "NO_URL"
 
-            step_name = step_dir.name.replace("__", " ").replace("_", " ").title()
-            duration_str = _read_step_duration(step_dir)
-            exit_status_emoji, exit_status = _read_step_exit_status(step_dir, current_step_name)
+        step_name = step_dir.name.replace("__", " ").replace("_", " ").title()
+        duration_str = _read_step_duration(step_dir)
+        exit_status_emoji, exit_status = _read_step_exit_status(step_dir, current_step_name)
 
-            if duration_str:
-                step_log_links.append(
-                    f"#### {exit_status_emoji} [{step_name}]({mlflow_log_url}) `{duration_str}`"
-                )
-            else:
-                step_log_links.append(f"#### {exit_status_emoji} [{step_name}]({mlflow_log_url})")
+        step_status.append("")
+        if duration_str:
+            step_status.append(
+                f"#### {exit_status_emoji} [{step_name}]({mlflow_log_url}) `{duration_str}`"
+            )
+        else:
+            step_status.append(f"#### {exit_status_emoji} [{step_name}]({mlflow_log_url})")
 
-            _process_notification_files(step_dir, step_log_links)
+        step_status.extend(_process_notification_files(step_dir))
 
-        except Exception as e:
-            logger.warning(f"Failed to create MLflow link for {run_log}: {e}")
-            continue
+        step_details = _process_step_details(step_dir, mlflow_run_url)
 
-    return step_log_links
+        # Add test execution info for this step
+        if step_details["test_labels_info"]:
+            # Add Test Execution Overview if we have any step info
+            step_status.append("")
+            step_status.append("**Test Execution Overview**")
+
+            step_status.extend([f"* {info}" for info in step_details["test_labels_info"]])
+
+        # Add postprocess info for this step
+        if step_details["postprocess_info"]:
+            step_status.extend([f"* {info}" for info in step_details["postprocess_info"]])
+
+    return step_status
 
 
 def _process_postprocess_status(mlflow_run_url: str | None = None) -> list[str]:
@@ -740,58 +748,46 @@ def _build_enhanced_notification(
         notification_parts.append("**Execution Engine Configuration**")
         notification_parts.append(execution_engine_config)
 
+    notification_success = True
     try:
         artifact_links, mlflow_run_url = _extract_artifact_links(status)
-        step_log_links = _process_step_logs(artifact_dir, mlflow_run_url)
+        step_status = _process_step_status(artifact_dir, mlflow_run_url)
         postprocess_status_links = _process_postprocess_status(mlflow_run_url)
+        test_status_section = _build_test_status_section(status, artifact_dir, mlflow_run_url)
+
+        if test_status_section:
+            notification_parts.append("")
+            notification_parts.append("---")
+            notification_parts.extend(test_status_section)
 
         if artifact_links:
             notification_parts.append("")
+            notification_parts.append("---")
             notification_parts.append("**Artifact Links**")
             notification_parts.extend([f"* {link}" for link in artifact_links])
         else:
             notification_parts.append("**Artifact Links:** No direct links available")
 
-        # Filter step_log_links to separate regular test logs from export-artifacts
-        regular_test_links = []
-        export_artifacts_links = []
-
-        if step_log_links:
-            for link in step_log_links:
-                # Check if this is an export-artifacts link (contains "Export" in the name)
-                if "Export" in link or "export" in link.lower():
-                    export_artifacts_links.append(link)
-                else:
-                    regular_test_links.append(link)
-
-        # Add regular test logs first
-        if regular_test_links:
+        if step_status:
             notification_parts.append("")
             notification_parts.append("---")
-            notification_parts.append("**Test Logs**")
-            notification_parts.extend(regular_test_links)
-
-            # Add distinct test and post-processing status right under Test Logs
-            test_status_section = _build_test_status_section(status, artifact_dir, mlflow_run_url)
-            if test_status_section:
-                notification_parts.append("")
-                notification_parts.extend(test_status_section)
-
-        # Add export-artifacts links at the end
-        if export_artifacts_links:
-            notification_parts.append("")
-            notification_parts.extend(export_artifacts_links)
+            notification_parts.append("**Step details**")
+            for link in step_status:
+                notification_parts.append(link)
 
         if postprocess_status_links:
             notification_parts.append("")
             notification_parts.extend(postprocess_status_links)
 
     except Exception as e:
-        logger.exception(f"Failed to extract artifact links: {e}")
+        logger.exception(f"Failed to build the extended notifications: {e}")
         notification_parts.append("**Artifact Links:** Error extracting links")
-        raise
+        notification_success = False
 
-    return "\n".join(notification_parts)
+    notification_parts.append("")
+    notification_parts.append("---")
+
+    return "\n".join(notification_parts), notification_success
 
 
 def _extract_test_labels_info(artifact_dir: Path, mlflow_run_url: str | None = None) -> list[str]:
@@ -814,7 +810,7 @@ def _extract_test_labels_info(artifact_dir: Path, mlflow_run_url: str | None = N
     test_labels_files = list(artifact_dir.glob("**/__test_labels__.yaml"))
 
     if not test_labels_files:
-        return ["No test labels found"]
+        return []
 
     for test_labels_file in test_labels_files:
         try:
@@ -831,7 +827,8 @@ def _extract_test_labels_info(artifact_dir: Path, mlflow_run_url: str | None = N
             message = completion.get("message")
 
             if message:
-                message = f" `{message}`"
+                message = f": `{message}`"
+
             # Format status
             if success:
                 status_emoji = "✅"
@@ -855,7 +852,7 @@ def _extract_test_labels_info(artifact_dir: Path, mlflow_run_url: str | None = N
             else:
                 dir_link = f"**{dir_name}**"
 
-            test_info_lines.append(f"* {status_emoji} {dir_link}:{message}")
+            test_info_lines.append(f"* {status_emoji} {dir_link}{message}")
 
         except Exception as e:
             test_info_lines.append(f"**{test_labels_file.name}**: Error reading file - {e}")
@@ -879,7 +876,7 @@ def _extract_postprocess_status_info(artifact_dir: Path) -> list[str]:
     postprocess_files = list(artifact_dir.glob("**/postprocess_status.yaml"))
 
     if not postprocess_files:
-        return ["No postprocess status found"]
+        return []
 
     for postprocess_file in postprocess_files:
         try:
@@ -922,7 +919,7 @@ def _extract_postprocess_status_info(artifact_dir: Path) -> list[str]:
     return postprocess_info_lines
 
 
-def _process_step_status(step_dir: Path, mlflow_run_url: str | None = None) -> dict[str, Any]:
+def _process_step_details(step_dir: Path, mlflow_run_url: str | None = None) -> dict[str, Any]:
     """Process test labels and postprocess status for a single step directory."""
     step_info = {"step_name": step_dir.name, "test_labels_info": [], "postprocess_info": []}
 
@@ -953,58 +950,11 @@ def _build_test_status_section(
         test_status = test_phase.get("phase", "UNKNOWN")
         test_message = test_phase.get("message", "")
 
-        # Determine post-processing status based on final status and test outcome
-        final_status = status.get("final_status", "unknown")
-        if test_status == "FAILED":
-            post_processing_status = "skipped"  # Don't run post-processing if test failed
-        elif final_status == "success":
-            post_processing_status = "success"
-        elif "failed" in final_status.lower():
-            post_processing_status = "failed"
-        else:
-            post_processing_status = "unknown"
-
-        status_lines = [f"**test:** {test_status}"]
+        status_lines = [f"**Test status**: {test_status}"]
 
         if test_message:
             # Format message with blockquote-style prefix
             status_lines.append(f"> {test_message}")
-
-        status_lines.append(f"**post-processing:** {post_processing_status}")
-
-        # Process each step directory for test execution and post-processing info
-        step_overview_lines = []
-        postprocess_overview_lines = []
-
-        for step_dir in sorted(artifact_dir.iterdir()):
-            if not step_dir.is_dir() or step_dir.name.startswith("."):
-                continue
-
-            step_status = _process_step_status(step_dir, mlflow_run_url)
-
-            # Add test execution info for this step
-            if step_status["test_labels_info"]:
-                step_overview_lines.extend(
-                    [f"* {info}" for info in step_status["test_labels_info"]]
-                )
-
-            # Add postprocess info for this step
-            if step_status["postprocess_info"]:
-                postprocess_overview_lines.extend(
-                    [f"* {info}" for info in step_status["postprocess_info"]]
-                )
-
-        # Add Test Execution Overview if we have any step info
-        if step_overview_lines:
-            status_lines.append("")
-            status_lines.append("**Test Execution Overview**")
-            status_lines.extend(step_overview_lines)
-
-        # Add Post-Processing Overview if we have any step info
-        if postprocess_overview_lines:
-            status_lines.append("")
-            status_lines.append("**Post-Processing Overview**")
-            status_lines.extend(postprocess_overview_lines)
 
         return status_lines
 
@@ -1173,6 +1123,10 @@ def caliper_export_entrypoint(_ctx, artifact_dir: Path | None, dry_run: bool):
                     }
                 },
                 "duration": "15 minutes, 30 seconds",
+                "test_phase": {
+                    "phase": "FAILED",
+                    "message": "Test execution completed with failures",
+                },
             }
         else:
             status = run_caliper_orchestration_export(artifact_dir=artifact_dir)
@@ -1209,9 +1163,9 @@ def caliper_export_entrypoint(_ctx, artifact_dir: Path | None, dry_run: bool):
         else:
             logger.info("DRY RUN: Skipping final artifacts update to MLflow")
 
-    # Return proper exit code
     if export_failed or notification_failed:
         return 1
+
     return 0
 
 

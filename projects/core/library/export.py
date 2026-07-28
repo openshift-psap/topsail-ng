@@ -99,7 +99,10 @@ def _update_fjob_export_status(status: dict):
 
 
 def send_notification(
-    artifact_dir: Path | None, status: dict[str, Any], notification_provider=None
+    artifact_dir: Path | None,
+    status: dict[str, Any],
+    notification_provider=None,
+    dry_run: bool = False,
 ) -> bool:
     """Send job completion notifications based on caliper export status.
 
@@ -107,37 +110,41 @@ def send_notification(
         artifact_dir: Directory to browse to find the artifacts
         status: Caliper export status object containing backend results and metadata
         notification_provider: Optional per-project SlackNotificationProvider instance
+        dry_run: If True, only build and log notification content without sending
 
     Returns:
         bool: True if notifications were sent successfully, False otherwise
     """
     # Extract notification parameters from status object
-    project = _extract_project_from_status(status)
-    operation = _extract_operation_from_status(status)
+
+    project = config.project.get_config("project.name")
     finish_reason = _extract_finish_reason_from_status(status)
     duration_str = _extract_duration_from_status(status)
-
-    # Apply minimal filtering logic
-    if _should_skip_notification(project, operation, finish_reason):
-        logger.info(f"Skipping notification for {project} {operation}")
-        return True  # Skipped is considered success
-
-    # Send actual notifications
-    notification_success = True
-    logger.info(f"Sending notification: {project} {operation} {finish_reason}{duration_str}")
 
     # Build enhanced notification with fournos job info and artifact links
     notification_status = _build_enhanced_notification(
         artifact_dir, project, finish_reason, duration_str, status
     )
 
-    # Write notification to file for GitHub pickup
+    # Send actual notifications
+    notification_success = True
+    if dry_run:
+        logger.info(f"DRY RUN: Would send notification: {project} {finish_reason}{duration_str}")
+        logger.info(f"DRY RUN: Notification content:\n{notification_status}")
+        return True  # Dry run is considered success
+    else:
+        logger.info(f"Sending notification: {project} {finish_reason}{duration_str}")
+
+    # Write notification to file for GitHub pickup (always generate, even in dry-run)
     try:
         if env.ARTIFACT_DIR:
             notification_file = Path(env.ARTIFACT_DIR) / "NOTIFICATION-github.md"
             with open(notification_file, "w", encoding="utf-8") as f:
                 f.write(notification_status + "\n")
-            logger.info(f"Wrote export notification file {notification_file}")
+            if dry_run:
+                logger.info(f"DRY RUN: Generated notification file {notification_file}")
+            else:
+                logger.info(f"Wrote export notification file {notification_file}")
         else:
             logger.warning("ARTIFACT_DIR not available, skipping notification file")
     except Exception as e:
@@ -150,8 +157,6 @@ def send_notification(
         # Get notification vault from configuration
         notification_vault = None
         try:
-            from projects.core.library import config
-
             notification_config = config.project.get_config("caliper.export.notifications", {})
             notification_vault = notification_config.get("vault")
             if notification_vault:
@@ -163,7 +168,7 @@ def send_notification(
             message=notification_status,
             github=True,
             slack=False,
-            dry_run=False,
+            dry_run=dry_run,
             notification_vault=notification_vault,
         )
         if success:
@@ -177,27 +182,30 @@ def send_notification(
 
     # Per-project Slack notification via provider
     if notification_provider:
-        try:
-            from projects.core.notifications.provider import NotificationContext
+        if not dry_run:
+            try:
+                from projects.core.notifications.provider import NotificationContext
 
-            artifact_dir = Path(env.ARTIFACT_DIR) if env.ARTIFACT_DIR else None
-            context = NotificationContext(
-                status=status,
-                finish_reason=str(finish_reason),
-                project_name=project or "unknown",
-                pr_number=os.environ.get("PULL_NUMBER"),
-                job_type=os.environ.get("JOB_TYPE"),
-                artifact_dir=artifact_dir,
-            )
-            ok = notification_provider.notify(context)
-            if ok:
-                logger.info("Successfully sent per-project Slack notification")
-            else:
-                logger.warning("Per-project Slack notification failed")
+                artifact_dir = Path(env.ARTIFACT_DIR) if env.ARTIFACT_DIR else None
+                context = NotificationContext(
+                    status=status,
+                    finish_reason=str(finish_reason),
+                    project_name=project or "unknown",
+                    pr_number=os.environ.get("PULL_NUMBER"),
+                    job_type=os.environ.get("JOB_TYPE"),
+                    artifact_dir=artifact_dir,
+                )
+                ok = notification_provider.notify(context)
+                if ok:
+                    logger.info("Successfully sent per-project Slack notification")
+                else:
+                    logger.warning("Per-project Slack notification failed")
+                    notification_success = False
+            except Exception as e:
+                logger.warning(f"Failed to send per-project Slack notification: {e}")
                 notification_success = False
-        except Exception as e:
-            logger.warning(f"Failed to send per-project Slack notification: {e}")
-            notification_success = False
+        else:
+            logger.info("DRY RUN: Would send per-project Slack notification")
 
     return notification_success
 
@@ -475,7 +483,15 @@ def _process_caliper_postprocess_status(
 
                     # Calculate step subdirectory relative to BASE_ARTIFACT_DIR.parent
                     # e.g., "/workspace/artifacts/000__replot/postprocess_output" relative to "/workspace/artifacts" = "000__replot/postprocess_output"
-                    step_subdir = str(base_path.relative_to(env.BASE_ARTIFACT_DIR.parent))
+                    try:
+                        step_subdir = str(base_path.relative_to(env.BASE_ARTIFACT_DIR.parent))
+                    except ValueError as e:
+                        # Path resolution failed (common in dry-run or different directory contexts)
+                        logger.warning(
+                            f"Failed to resolve path {base_path} relative to {env.BASE_ARTIFACT_DIR.parent}: {e}"
+                        )
+                        # Fallback: use the step directory name
+                        step_subdir = step_dir.name
                 else:
                     # Fallback to step_dir.name for backward compatibility
                     step_subdir = step_dir.name
@@ -997,27 +1013,6 @@ def _build_test_status_section(
         return []
 
 
-def _extract_project_from_status(status: dict[str, Any]) -> str:
-    """Extract project name from status object or environment."""
-    # Try to get project from environment variables
-    project = os.environ.get("PROJECT_NAME")
-    if project:
-        return project
-
-    # Fallback to JOB_NAME parsing (common in CI environments)
-    job_name = os.environ.get("JOB_NAME", "")
-    if job_name and "-" in job_name:
-        # Extract project from job name pattern like "project-operation-variant"
-        return job_name.split("-")[0]
-
-    return "unknown"
-
-
-def _extract_operation_from_status(status: dict[str, Any]) -> str:
-    """Extract operation name from status object."""
-    return "export-artifacts"
-
-
 def _extract_finish_reason_from_status(status: dict[str, Any]) -> FinishReason:
     """Extract finish reason from status object."""
     # Check if any backend failed in the status
@@ -1045,12 +1040,6 @@ def _extract_duration_from_status(status: dict[str, Any]) -> str:
     if duration:
         return f" after {duration}"
     return ""
-
-
-def _should_skip_notification(project: str, operation: str, finish_reason: FinishReason) -> bool:
-    """Apply minimal filtering logic to determine if notification should be skipped."""
-    # Minimal filtering - no special cases for now
-    return False
 
 
 def run_caliper_orchestration_export(*, artifact_dir: Path):
@@ -1114,9 +1103,16 @@ def run_caliper_orchestration_export(*, artifact_dir: Path):
     default=None,
     help="If set, overrides caliper.export.from (artifact root directory).",
 )
+@click.option(
+    "--dry-run",
+    "dry_run",
+    is_flag=True,
+    default=False,
+    help="Show what would be exported and notified without actually performing operations.",
+)
 @click.pass_context
 @ci_lib.safe_ci_entrypoint
-def caliper_export_entrypoint(_ctx, artifact_dir: Path | None):
+def caliper_export_entrypoint(_ctx, artifact_dir: Path | None, dry_run: bool):
     """Export the file artifacts."""
 
     notification_provider = getattr(getattr(_ctx, "obj", None), "notification_provider", None)
@@ -1147,17 +1143,43 @@ def caliper_export_entrypoint(_ctx, artifact_dir: Path | None):
         )
         return 1
 
-    logging.info(f"Building caliper notification from {artifact_dir}")
+    if dry_run:
+        logging.info(f"DRY RUN: Building caliper notification from {artifact_dir}")
+    else:
+        logging.info(f"Building caliper notification from {artifact_dir}")
 
     # Set the config so other functions can access it
     config.project.set_config("caliper.export.from", str(artifact_dir))
 
     try:
-        status = run_caliper_orchestration_export(artifact_dir=artifact_dir)
-        logger.info("Export status:\n" + yaml.dump(status, indent=4))
+        if dry_run:
+            logger.info(
+                "DRY RUN: Skipping actual caliper export, creating mock status for notification"
+            )
+            # Create a realistic mock status for notification testing
+            status = {
+                "success": True,
+                "final_status": "success",
+                "backends": {},
+                "caliper_artifacts_export": {
+                    "backends": {
+                        "mlflow": {
+                            "success": True,
+                            "run_id": "dry-run-mock-id",
+                            "experiment_url": "http://localhost:5000/#/experiments/123",
+                            "run_url": "http://localhost:5000/#/experiments/123/runs/dry-run-mock-id/artifacts?workspace=forge-dry-run",
+                            "tracking_uri": "http://localhost:5000",
+                        }
+                    }
+                },
+                "duration": "15 minutes, 30 seconds",
+            }
+        else:
+            status = run_caliper_orchestration_export(artifact_dir=artifact_dir)
+            logger.info("Export status:\n" + yaml.dump(status, indent=4))
 
-        # Update fjob status with export results
-        _update_fjob_export_status(status)
+            # Update fjob status with export results
+            _update_fjob_export_status(status)
 
     except Exception as e:
         logger.error(f"Export failed: {e}")
@@ -1170,7 +1192,10 @@ def caliper_export_entrypoint(_ctx, artifact_dir: Path | None):
         if status:
             try:
                 notification_success = send_notification(
-                    artifact_dir, status, notification_provider=notification_provider
+                    artifact_dir,
+                    status,
+                    notification_provider=notification_provider,
+                    dry_run=dry_run,
                 )
                 if not notification_success:
                     logger.error("Notification sending failed")
@@ -1179,7 +1204,10 @@ def caliper_export_entrypoint(_ctx, artifact_dir: Path | None):
                 logger.exception(f"Failed to send notifications: {e}")
                 notification_failed = True
 
-        _update_final_artifacts(artifact_dir, status)
+        if not dry_run:
+            _update_final_artifacts(artifact_dir, status)
+        else:
+            logger.info("DRY RUN: Skipping final artifacts update to MLflow")
 
     # Return proper exit code
     if export_failed or notification_failed:

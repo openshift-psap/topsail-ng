@@ -17,6 +17,8 @@ import click
 import yaml
 
 from projects.caliper.orchestration.export import (
+    CensoringOccurredException,
+    ExportFailedException,
     run_from_orchestration_config,
 )
 from projects.core.library import ci as ci_lib
@@ -165,7 +167,9 @@ def _process_caliper_postprocess_status(
             raise
 
 
-def run_caliper_orchestration_export(*, artifact_dir: Path):
+def run_caliper_orchestration_export(
+    *, artifact_dir: Path, disable_censoring: bool = False, disable_file_export: bool = False
+):
 
     # Use FJOB_NAME as fallback for mlflow run_name if not configured
     run_name = config.project.get_config(
@@ -215,7 +219,9 @@ def run_caliper_orchestration_export(*, artifact_dir: Path):
 
     caliper_cfg = config.project.get_config("caliper", print=False)
 
-    return run_from_orchestration_config(caliper_cfg)
+    return run_from_orchestration_config(
+        caliper_cfg, disable_censoring=disable_censoring, disable_file_export=disable_file_export
+    )
 
 
 @click.command("export-artifacts")
@@ -233,9 +239,37 @@ def run_caliper_orchestration_export(*, artifact_dir: Path):
     default=False,
     help="Show what would be exported and notified without actually performing operations.",
 )
+@click.option(
+    "--disable-notification",
+    "disable_notification",
+    is_flag=True,
+    default=False,
+    help="Skip sending completion notifications.",
+)
+@click.option(
+    "--disable-censoring",
+    "disable_censoring",
+    is_flag=True,
+    default=False,
+    help="Skip censoring sensitive artifacts before export.",
+)
+@click.option(
+    "--disable-file-export",
+    "disable_file_export",
+    is_flag=True,
+    default=False,
+    help="Skip artifact file upload but still run notifications with mock status.",
+)
 @click.pass_context
 @ci_lib.safe_ci_entrypoint
-def caliper_export_entrypoint(_ctx, artifact_dir: Path | None, dry_run: bool):
+def caliper_export_entrypoint(
+    _ctx,
+    artifact_dir: Path | None,
+    dry_run: bool,
+    disable_notification: bool,
+    disable_censoring: bool,
+    disable_file_export: bool,
+):
     """Export the file artifacts."""
 
     notification_provider = getattr(getattr(_ctx, "obj", None), "notification_provider", None)
@@ -266,6 +300,9 @@ def caliper_export_entrypoint(_ctx, artifact_dir: Path | None, dry_run: bool):
         )
         return 1
 
+    # Normalize artifact_dir to a pathlib.Path after precedence resolution
+    artifact_dir = Path(artifact_dir)
+
     if dry_run:
         logging.info(f"DRY RUN: Building caliper notification from {artifact_dir}")
     else:
@@ -289,9 +326,9 @@ def caliper_export_entrypoint(_ctx, artifact_dir: Path | None, dry_run: bool):
                         "mlflow": {
                             "success": True,
                             "run_id": "dry-run-mock-id",
-                            "experiment_url": "http://localhost:5000/#/experiments/123",
-                            "run_url": "http://localhost:5000/#/experiments/123/runs/dry-run-mock-id/artifacts?workspace=forge-dry-run",
-                            "tracking_uri": "http://localhost:5000",
+                            "experiment_url": "http://DRY_RUN_MLFLOW_FAKE_URL/#/experiments/123",
+                            "run_url": "http://DRY_RUN_MLFLOW_FAKE_URL/#/experiments/123/runs/dry-run-mock-id/artifacts?workspace=forge-dry-run",
+                            "tracking_uri": "http://DRY_RUN_MLFLOW_FAKE_URL",
                         }
                     }
                 },
@@ -302,21 +339,43 @@ def caliper_export_entrypoint(_ctx, artifact_dir: Path | None, dry_run: bool):
                 },
             }
         else:
-            status = run_caliper_orchestration_export(artifact_dir=artifact_dir)
+            status = run_caliper_orchestration_export(
+                artifact_dir=artifact_dir,
+                disable_censoring=disable_censoring,
+                disable_file_export=disable_file_export,
+            )
             logger.info("Export status:\n" + yaml.dump(status, indent=4))
 
-            # Update fjob status with export results
-            _update_fjob_export_status(status)
+            # Update fjob status with export results (only if file export is not disabled)
+            if not disable_file_export:
+                _update_fjob_export_status(status)
+            else:
+                logger.info("Skipping fjob status update due to --disable-file-export flag")
 
+    except CensoringOccurredException as e:
+        logger.info(f"Export completed with censoring: {e}")
+        # Create success status with censoring flag for notification
+        status = {
+            "success": True,
+            "final_status": "success_with_censoring",
+            "censoring_occurred": True,
+            "message": str(e),
+            "backends": {},
+        }
+    except ExportFailedException as e:
+        logger.exception(f"Export failed: {e}")
+        export_failed = True
+        # Create failure status for notification
+        status = {"success": False, "error": str(e), "backends": {}}
     except Exception as e:
-        logger.error(f"Export failed: {e}")
+        logger.exception(f"Export failed with unexpected error: {e}")
         export_failed = True
         # Create failure status for notification
         status = {"success": False, "error": str(e), "backends": {}}
 
     finally:
         # Send completion notifications regardless of success/failure
-        if status:
+        if status and not disable_notification:
             try:
                 notification_success = send_notification(
                     artifact_dir,
@@ -330,14 +389,23 @@ def caliper_export_entrypoint(_ctx, artifact_dir: Path | None, dry_run: bool):
             except Exception as e:
                 logger.exception(f"Failed to send notifications: {e}")
                 notification_failed = True
+        elif disable_notification:
+            logger.info("Notifications disabled via --disable-notification flag")
 
-        if not dry_run:
-            _update_final_artifacts(artifact_dir, status)
+        if not disable_file_export:
+            if not dry_run:
+                _update_final_artifacts(artifact_dir, status)
+            else:
+                logger.info("DRY RUN: Skipping final artifacts update to MLflow")
         else:
-            logger.info("DRY RUN: Skipping final artifacts update to MLflow")
+            logger.info("Skipping final artifacts upload due to --disable-file-export flag")
 
     if export_failed or notification_failed:
-        return 1
+        return 1, "failed"
+
+    # Check if censoring occurred and return exit code 1 if so
+    if status and status.get("censoring_occurred", False):
+        return 1, "censoring_occurred"
 
     return 0
 

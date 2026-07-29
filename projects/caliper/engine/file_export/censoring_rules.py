@@ -14,7 +14,6 @@ import re
 KEYWORD_PATTERNS = [
     # Password patterns
     r"password\s*[:=]\s*\S+",
-    r"pwd\s*[:=]\s*\S+",
     r"passwd\s*[:=]\s*\S+",
     # API key patterns
     r"api[_-]?key\s*[:=]\s*\S+",
@@ -44,7 +43,6 @@ KEYWORD_PATTERNS = [
     r"postgresql://[^/\s]+:[^@\s]+@",
     # Generic credential patterns
     r"credential\s*[:=]\s*\S+",
-    r"secret\s*[:=]\s*\S+",
     r"private[_-]?key\s*[:=]\s*\S+",
 ]
 
@@ -84,7 +82,30 @@ def matches_sensitive_filename(filename: str) -> bool:
     Returns:
         bool: True if the filename indicates a sensitive file
     """
-    return any(pattern.match(filename) for pattern in COMPILED_FILE_PATTERNS)
+    from pathlib import Path
+
+    # Filename-only patterns that should match just the basename
+    filename_only_patterns = [
+        r".*secret.*",
+        r".*credential.*",
+        r".*password.*",
+    ]
+
+    # Check filename-only patterns against basename
+    basename = Path(filename).name
+    for pattern_str in filename_only_patterns:
+        pattern = re.compile(pattern_str, re.IGNORECASE)
+        if pattern.match(basename):
+            return True
+
+    # Check all other patterns against full path
+    for pattern in COMPILED_FILE_PATTERNS:
+        pattern_str = pattern.pattern
+        if pattern_str not in filename_only_patterns:
+            if pattern.match(filename):
+                return True
+
+    return False
 
 
 def find_sensitive_content_in_text(content: str) -> list[str]:

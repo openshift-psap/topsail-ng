@@ -31,12 +31,18 @@ class VaultContent:
     name: str
     description: str
     filename: str | None = None
+    sensible: bool = True
     _vault: Optional["VaultDefinition"] = None
 
     def __post_init__(self):
         # Default filename to the content name if not specified
         if self.filename is None:
             self.filename = self.name
+
+    @property
+    def is_sensible(self) -> bool:
+        """Whether this content should be considered sensitive for censoring purposes"""
+        return self.sensible
 
     @property
     def file_path(self) -> Path | None:
@@ -107,13 +113,15 @@ class VaultManager:
                 # New format with file mapping and description
                 filename = content_def.get("file", content_name)
                 description = content_def.get("description", "")  # Don't provide default
+                sensible = content_def.get("sensible", True)  # Default to True
             else:
                 # Legacy format - content_def is the description
                 filename = content_name
                 description = content_def if content_def else ""
+                sensible = True  # Sensible by default
 
             content[content_name] = VaultContent(
-                name=content_name, description=description, filename=filename
+                name=content_name, description=description, filename=filename, sensible=sensible
             )
 
         vault_def = VaultDefinition(

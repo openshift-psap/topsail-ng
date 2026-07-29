@@ -169,12 +169,19 @@ def safe_ci_entrypoint(command_func):
     @functools.wraps(command_func)
     def wrapper(*args, **kwargs):
         exit_code = 0
+        reason = None
         try:
             result = command_func(*args, **kwargs)
-            exit_code = result if result is not None else 0
+            if result is None:
+                exit_code = 0
+            elif isinstance(result, tuple) and len(result) == 2:
+                exit_code, reason = result
+            else:
+                exit_code = result
         except Exception as e:
             handle_ci_exception(e)
             exit_code = 1
+            reason = str(e)
 
         # Save exit status to YAML file
         try:
@@ -183,11 +190,18 @@ def safe_ci_entrypoint(command_func):
 
             exit_status_file = metadata_dir / "exit_status.yaml"
             exit_status_data = {"return_code": exit_code}
+            if reason is not None:
+                exit_status_data["reason"] = reason
 
             with open(exit_status_file, "w", encoding="utf-8") as f:
                 yaml.dump(exit_status_data, f, default_flow_style=False)
 
-            logger.info(f"Exit status saved: {exit_status_file} (return_code: {exit_code})")
+            if reason:
+                logger.info(
+                    f"Exit status saved: {exit_status_file} (return_code: {exit_code}, reason: {reason})"
+                )
+            else:
+                logger.info(f"Exit status saved: {exit_status_file} (return_code: {exit_code})")
         except Exception as save_error:
             logger.warning(f"Failed to save exit status: {save_error}")
 
@@ -232,6 +246,7 @@ def add_notification_file(
             f.write(message)
 
         logger.info(f"Created notification file: {file_path}")
+        logger.info(f"{message}")
         return str(file_path)
 
     except Exception as e:

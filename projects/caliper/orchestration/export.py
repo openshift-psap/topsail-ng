@@ -25,6 +25,9 @@ from projects.caliper.engine.file_export.artifacts_export_run import (
     run_multi_run_artifacts_export,
 )
 from projects.caliper.engine.file_export.mlflow_config import load_mlflow_config_yaml
+from projects.caliper.orchestration.censoring import (
+    orchestration_apply_censoring,
+)
 from projects.caliper.orchestration.export_config import (
     CaliperOrchestrationExportConfig,
 )
@@ -33,6 +36,24 @@ from projects.core.library import vault as vault_lib
 from projects.core.library.config import requires
 
 logger = logging.getLogger(__name__)
+
+
+class CaliperExportError(Exception):
+    """Base exception for Caliper export errors."""
+
+    pass
+
+
+class CensoringOccurredException(CaliperExportError):
+    """Exception raised when censoring occurs during export."""
+
+    pass
+
+
+class ExportFailedException(CaliperExportError):
+    """Exception raised when export fails."""
+
+    pass
 
 
 # ---------------------------------------------------------------------------
@@ -150,6 +171,8 @@ def resolve_run_names(
 
 def run_from_orchestration_config(
     caliper_cfg: dict[str, Any] | None,
+    disable_censoring: bool = False,
+    disable_file_export: bool = False,
 ) -> int:
     """
     Run Caliper file export from orchestration config.
@@ -250,6 +273,8 @@ def run_from_orchestration_config(
                 verbose=export_cfg.verbose,
                 status_yaml_path=status_yaml,
                 upload_workers=export_cfg.upload_workers,
+                disable_censoring=disable_censoring,
+                disable_file_export=disable_file_export,
             )
     else:
         effective_name = (
@@ -265,21 +290,46 @@ def run_from_orchestration_config(
         if mlflow_config_data is not None:
             mlflow_kwargs["mlflow_config_data"] = mlflow_config_data
 
-        ret = run_artifacts_export(
-            from_path=from_path,
-            status_yaml_path=status_yaml,
-            dry_run=export_cfg.dry_run,
-            verbose=export_cfg.verbose,
-            upload_workers=export_cfg.upload_workers,
-            backend=backends,
-            **mlflow_kwargs,
-        )
+        # Apply censoring if enabled (in-place modification)
+        censoring_occurred = orchestration_apply_censoring(from_path, export_cfg, disable_censoring)
 
-    if ret != 0:
-        raise RuntimeError(f"Caliper export failed (ret code = {ret})")
+        if disable_file_export:
+            # Create mock status for notifications
+            mock_status = {
+                "success": True,
+                "final_status": "success",
+                "backends": {"mlflow": {"success": True, "run_id": "mock-disabled-export-id"}},
+                "duration": "0 seconds (export disabled)",
+                "censoring_occurred": censoring_occurred,
+            }
+            # Write mock status to status file
+            with open(status_yaml, "w") as f:
+                yaml.dump(mock_status, f, indent=4)
+        else:
+            ret = run_artifacts_export(
+                from_path=from_path,
+                status_yaml_path=status_yaml,
+                dry_run=export_cfg.dry_run,
+                verbose=export_cfg.verbose,
+                upload_workers=export_cfg.upload_workers,
+                backend=backends,
+                **mlflow_kwargs,
+            )
+            if ret != 0:
+                raise ExportFailedException(f"Artifacts export failed (ret code = {ret})")
+
+        # Check for censoring in single-run export
+        if censoring_occurred:
+            raise CensoringOccurredException("Files were censored during export")
 
     with open(status_yaml) as f:
-        return yaml.safe_load(f.read())
+        status = yaml.safe_load(f.read())
+
+    # Add censoring information to status
+    if len(run_dirs) == 1:
+        status["censoring_occurred"] = censoring_occurred
+
+    return status
 
 
 @requires(
@@ -473,7 +523,7 @@ def build_mlflow_run_url(
     assert_tracking_uri_has_no_userinfo(tracking_uri)
 
     qs = f"?workspace={quote(workspace, safe='')}" if workspace else ""
-    return f"{tracking_uri}{qs}#/experiments/{experiment_id}/runs/{run_id}/artifacts"
+    return f"{tracking_uri}/{qs}#/experiments/{experiment_id}/runs/{run_id}/artifacts"
 
 
 def _discover_precreated_mlflow_run_id(from_path: Path) -> str | None:

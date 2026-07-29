@@ -12,8 +12,8 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from projects.caliper.orchestration.censoring import censor_text
 
+from projects.caliper.orchestration.censoring import censor_text
 from projects.core.ci_entrypoint.prepare_ci import CI_METADATA_DIRNAME
 from projects.core.library import ci as ci_lib
 from projects.core.library import config, env
@@ -674,12 +674,12 @@ def _extract_postprocess_status_info(artifact_dir: Path) -> list[str]:
                         status_emoji = (
                             "✅" if status == "success" else "❌" if status == "failed" else "⚪"
                         )
-                        step_statuses.append(f"{step_name}:{status_emoji}")
+                        step_statuses.append(f"{status_emoji} {step_name}")
 
             # Format overall line
             overall_emoji = "✅" if overall_success else "❌"
             if step_statuses:
-                steps_str = " " + " ".join(step_statuses)
+                steps_str = " " + " • ".join(step_statuses)
             else:
                 steps_str = f" {final_status}"
 

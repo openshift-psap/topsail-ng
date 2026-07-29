@@ -326,10 +326,10 @@ def ci_banner(project: str, operation: str, args: list[str]):
 
     base_sha = os.environ.get("PULL_BASE_SHA", "main")
     if base_sha == "main":
-        logger.warning("PULL_BASE_SHA not set. Showing the last commits from main.")
+        logger.info("PULL_BASE_SHA not set. Showing the last commits from main.")
     pull_sha = os.environ.get("PULL_PULL_SHA", "")
     if not pull_sha:
-        logger.warning("PULL_PULL_SHA not set. Showing the last commits from main.")
+        logger.info("PULL_PULL_SHA not set. Showing the last commits from main.")
 
     logger.info(f"Git command will be: git show --quiet --oneline {base_sha}..{pull_sha}")
 

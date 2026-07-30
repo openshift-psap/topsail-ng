@@ -443,7 +443,7 @@ def init(
 
     global _vault_manager, _strict_validation_enabled
     if _vault_manager is not None:
-        logger.warning("VaultManager already initialized")
+        logger.warning("VaultManager already initialized", stack_info=True)
         return
 
     _vault_manager = VaultManager()

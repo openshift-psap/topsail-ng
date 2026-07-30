@@ -124,8 +124,12 @@ def send_notification(
                 from projects.core.notifications.provider import NotificationContext
 
                 artifact_dir = Path(env.ARTIFACT_DIR) if env.ARTIFACT_DIR else None
+                # Censor status fields before creating NotificationContext
+                censored_status = yaml.safe_load(
+                    _censor_notification_text(yaml.dump(status), verbose=dry_run)
+                )
                 context = NotificationContext(
-                    status=status,
+                    status=censored_status,
                     finish_reason=str(finish_reason),
                     project_name=project or "unknown",
                     pr_number=os.environ.get("PULL_NUMBER"),
@@ -338,12 +342,14 @@ def _get_step_status_section(artifact_dir: Path | None, mlflow_run_url: str | No
         log_counts = _count_log_messages(step_dir)
         log_summary = _format_log_summary(log_counts)
 
-        mlflow_log_url = (
-            f"{mlflow_run_url}/artifacts/{step_name}/run.log" if mlflow_run_url else "#"
-        )
+        # Create step title - linked if MLflow URL available, plain-text otherwise
         if mlflow_run_url:
+            mlflow_log_url = _create_mlflow_url(mlflow_run_url, step_name)
             step_title = f"#### {exit_status_emoji} [{step_name}]({mlflow_log_url}){log_summary}"
-            step_status.append(step_title)
+        else:
+            step_title = f"#### {exit_status_emoji} {step_name}{log_summary}"
+
+        step_status.append(step_title)
 
         step_status.extend(_process_notification_files(step_dir))
 
@@ -604,6 +610,8 @@ def _extract_test_labels_info(artifact_dir: Path, mlflow_run_url: str | None = N
 
             if message:
                 message = f": `{message}`"
+            else:
+                message = ""
 
             # Format status
             if success:

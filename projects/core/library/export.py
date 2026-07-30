@@ -17,7 +17,6 @@ import click
 import yaml
 
 from projects.caliper.orchestration.export import (
-    CensoringOccurredException,
     ExportFailedException,
     run_from_orchestration_config,
 )
@@ -181,35 +180,15 @@ def run_caliper_orchestration_export(
         )
 
     # Initialize vaults needed for export operations
-    logger.info("Checking vaults for export operations")
     try:
+        from projects.core.library import vault
+
         # Get export-specific vaults (MLflow, S3, notifications)
         export_vaults = caliper_export_list_vaults()
-        logger.info(f"Export vaults needed: {len(export_vaults)} - {export_vaults}")
 
-        # Initialize vaults if any are needed
         if export_vaults:
-            from projects.core.library import vault
-
-            # Check if vault manager is already initialized
-            try:
-                vault.get_vault_manager()
-                logger.info(
-                    f"Vault manager already initialized, checking {len(export_vaults)} export vaults"
-                )
-                manager_already_initialized = True
-            except RuntimeError:
-                logger.info(f"Initializing vault manager with {len(export_vaults)} export vaults")
-                manager_already_initialized = False
-
             vault.init(vaults=export_vaults)
-
-            if manager_already_initialized:
-                logger.info(f"Export vault check completed for {len(export_vaults)} vaults")
-            else:
-                logger.info(
-                    f"Successfully initialized vault manager with {len(export_vaults)} vaults for export"
-                )
+            logger.info(f"Initialized vault manager with {len(export_vaults)} vaults for export")
         else:
             logger.info("No vaults needed for export operation")
 
@@ -352,16 +331,6 @@ def caliper_export_entrypoint(
             else:
                 logger.info("Skipping fjob status update due to --disable-file-export flag")
 
-    except CensoringOccurredException as e:
-        logger.info(f"Export completed with censoring: {e}")
-        # Create success status with censoring flag for notification
-        status = {
-            "success": True,
-            "final_status": "success_with_censoring",
-            "censoring_occurred": True,
-            "message": str(e),
-            "backends": {},
-        }
     except ExportFailedException as e:
         logger.exception(f"Export failed: {e}")
         export_failed = True

@@ -20,23 +20,6 @@ from projects.core.library import vault as vault_lib
 
 logger = logging.getLogger(__name__)
 
-# Vault content types to automatically discover for censoring
-VAULT_CONTENT_TYPES = [
-    "token",
-    "password",
-    "secret",
-    "key",
-    "credential",
-    "tracking_uri",
-    "username",
-    "api_key",
-    "api-key",
-    "auth",
-    "authentication",
-    "bearer",
-    "oauth",
-]
-
 
 def discover_vault_secrets(verbose: bool = False) -> tuple[set[str], dict[str, str]]:
     """
@@ -76,33 +59,99 @@ def discover_vault_secrets(verbose: bool = False) -> tuple[set[str], dict[str, s
                     continue
 
                 content_path = vault_manager.get_vault_content_path(vault_name, content_name)
-                if content_path and content_path.exists():
-                    try:
-                        # Read vault content (assume it's text)
-                        content_text = content_path.read_text(
-                            encoding="utf-8", errors="ignore"
-                        ).strip()
-                        if content_text:
-                            vault_secrets.add(content_text)
-                            secret_mapping[content_text] = f"{vault_name}/{content_name}"
-                            secrets_discovered += 1
-                            if verbose:
-                                logger.info(
-                                    f"Discovered secret from vault {vault_name}/{content_name}"
-                                )
-                    except Exception as e:
+                if not (content_path and content_path.exists()):
+                    logger.warning(f"Invalid vault found: {vault_name} {content_name} (missing)")
+                    continue
+
+                try:
+                    # Read vault content (assume it's text)
+                    content_text = content_path.read_text(encoding="utf-8", errors="ignore").strip()
+                    if not content_text:
+                        logger.warning(f"Invalid vault found: {vault_name} {content_name} (empty)")
+                    else:
+                        vault_secrets.add(content_text)
+                        secret_mapping[content_text] = f"{vault_name}/{content_name}"
+                        secrets_discovered += 1
                         if verbose:
-                            logger.warning(
-                                f"Failed to read vault content {vault_name}/{content_name}: {e}"
-                            )
+                            logger.info(f"Discovered secret from vault {vault_name}/{content_name}")
+                except Exception as e:
+                    logger.warning(f"Failed to read vault content {vault_name}/{content_name}: {e}")
 
         if verbose:
             logger.info(f"Discovered {secrets_discovered} vault secrets for censoring")
 
     except Exception as e:
-        logger.warning(f"Failed to discover vault secrets: {e}")
+        logger.exception(f"Failed to discover vault secrets: {e}")
+        raise
 
     return vault_secrets, secret_mapping
+
+
+def censor_text(text: str, verbose: bool = False) -> str:
+    """
+    Censor sensitive content in text using caliper's censoring rules.
+
+    Args:
+        text: The text to censor
+        verbose: Enable verbose logging
+
+    Returns:
+        Censored text with sensitive content replaced
+    """
+    if not text:
+        return text
+
+    censored_text = text
+    replacements_made = 0
+
+    try:
+        # Discover vault secrets for censoring
+        vault_secrets, secret_mapping = discover_vault_secrets(verbose=verbose)
+        # /!\ secret_mapping contains the secret values. Process with extra care.
+
+        # Replace vault secrets first (more specific)
+        for secret in vault_secrets:
+            if secret and secret.strip() and secret.strip() in censored_text:
+                censored_text = censored_text.replace(secret.strip(), "[REDACTED-VAULT]")
+                replacements_made += 1
+                if verbose:
+                    vault_identifier = secret_mapping.get(secret.strip(), "unknown vault")
+                    logger.info(f"Censored vault secret from {vault_identifier} in text")
+
+        # Import keyword patterns for content censoring
+        from projects.caliper.engine.file_export.censoring_rules import (
+            COMPILED_KEYWORD_PATTERNS,
+            KEYWORD_PATTERNS,
+        )
+
+        # Apply keyword pattern censoring
+        for i, pattern in enumerate(COMPILED_KEYWORD_PATTERNS):
+            matches = list(pattern.finditer(censored_text))
+            if matches:
+                # Replace all matched spans with redacted text, preserving other content
+                # Process patterns in reverse order by position to maintain string indices
+                for match in reversed(matches):
+                    censored_text = (
+                        censored_text[: match.start()] + "[REDACTED]" + censored_text[match.end() :]
+                    )
+                    replacements_made += 1
+
+                if verbose:
+                    logger.info(
+                        f"Censored {len(matches)} instances of pattern '{KEYWORD_PATTERNS[i]}' in text"
+                    )
+
+        if replacements_made > 0:
+            logger.info(f"Censored {replacements_made} sensitive items from text")
+        elif verbose:
+            logger.info("No sensitive content found in text")
+
+    except Exception as e:
+        logger.warning(f"Error during text censoring: {e}")
+        # On error, add a warning to the text
+        censored_text += "\n\n> ⚠️ **Note**: Automatic content censoring encountered an error. Please review this content manually for sensitive information."
+
+    return censored_text
 
 
 def orchestration_apply_censoring(
@@ -128,6 +177,7 @@ def orchestration_apply_censoring(
 
     # Discover vault secrets
     vault_secrets, secret_mapping = discover_vault_secrets(verbose=export_cfg.verbose)
+    # /!\ secret_mapping contains the secret values. Process with extra care.
 
     # Collect all artifact files
     all_artifact_paths = [p for p in from_path.rglob("*") if p.is_file()]

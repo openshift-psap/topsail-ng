@@ -22,9 +22,11 @@ from projects.caliper.engine.constants import LEGACY_METADATA_FILE, METADATA_FIL
 from projects.caliper.engine.file_export.artifacts_export_run import (
     discover_run_dirs,
     run_artifacts_export,
-    run_multi_run_artifacts_export,
 )
-from projects.caliper.engine.file_export.mlflow_config import load_mlflow_config_yaml
+from projects.caliper.engine.file_export.mlflow_config import (
+    load_mlflow_config_yaml,
+    project_metadata_fields,
+)
 from projects.caliper.orchestration.censoring import (
     orchestration_apply_censoring,
 )
@@ -40,12 +42,6 @@ logger = logging.getLogger(__name__)
 
 class CaliperExportError(Exception):
     """Base exception for Caliper export errors."""
-
-    pass
-
-
-class CensoringOccurredException(CaliperExportError):
-    """Exception raised when censoring occurs during export."""
 
     pass
 
@@ -258,21 +254,16 @@ def run_from_orchestration_config(
             logger.info(
                 "dry-run: would export %d run dirs from %s (skipping)", len(run_dirs), from_path
             )
-            ret = 0
         else:
-            ret = run_multi_run_artifacts_export(
+            _run_multi_run_export(
+                export_cfg=export_cfg,
                 from_path=from_path,
-                run_dirs=run_dirs,
-                backend=backends,
-                mlflow_experiment=export_cfg.mlflow_experiment,
-                mlflow_run_name=naming.get("parent_run_name"),
+                status_yaml=status_yaml,
                 mlflow_secrets_path=mlflow_secrets_path,
                 mlflow_config_data=mlflow_config_data,
-                mlflow_run_id=mlflow_run_id,
+                run_dirs=run_dirs,
+                resolved_parent_name=naming.get("parent_run_name"),
                 child_run_names=naming.get("child_run_names") or {},
-                verbose=export_cfg.verbose,
-                status_yaml_path=status_yaml,
-                upload_workers=export_cfg.upload_workers,
                 disable_censoring=disable_censoring,
                 disable_file_export=disable_file_export,
             )
@@ -298,7 +289,9 @@ def run_from_orchestration_config(
             mock_status = {
                 "success": True,
                 "final_status": "success",
-                "backends": {"mlflow": {"success": True, "run_id": "mock-disabled-export-id"}},
+                "caliper_artifacts_export": {
+                    "backends": {"mlflow": {"success": True, "run_id": "mock-disabled-export-id"}},
+                },
                 "duration": "0 seconds (export disabled)",
                 "censoring_occurred": censoring_occurred,
             }
@@ -317,10 +310,6 @@ def run_from_orchestration_config(
             )
             if ret != 0:
                 raise ExportFailedException(f"Artifacts export failed (ret code = {ret})")
-
-        # Check for censoring in single-run export
-        if censoring_occurred:
-            raise CensoringOccurredException("Files were censored during export")
 
     with open(status_yaml) as f:
         status = yaml.safe_load(f.read())
@@ -549,3 +538,184 @@ def _discover_precreated_mlflow_run_id(from_path: Path) -> str | None:
             logger.warning("Failed to read test labels %s: %s", labels_file, e)
 
     return None
+
+
+METRICS_FILE = "metrics.json"
+PARAMETERS_FILE = "parameters.json"
+TEST_LABELS_MARKER = "__test_labels__.yaml"
+
+
+def _discover_run_dirs(from_path: Path) -> list[Path]:
+    """Auto-detect test run directories via ``__test_labels__.yaml`` markers."""
+    run_dirs: list[Path] = []
+    for marker in sorted(from_path.rglob(TEST_LABELS_MARKER)):
+        if marker.is_file():
+            run_dirs.append(marker.parent)
+
+    if run_dirs:
+        logger.info(
+            "Auto-detected %d test run director%s via %s",
+            len(run_dirs),
+            "y" if len(run_dirs) == 1 else "ies",
+            TEST_LABELS_MARKER,
+        )
+    return run_dirs
+
+
+def _run_multi_run_export(
+    *,
+    export_cfg: CaliperOrchestrationExportConfig,
+    from_path: Path,
+    status_yaml: Path,
+    mlflow_secrets_path: Path,
+    mlflow_config_data: dict[str, Any] | None,
+    run_dirs: list[Path],
+    resolved_parent_name: str | None = None,
+    child_run_names: dict[Path, str] | None = None,
+    disable_censoring: bool = False,
+    disable_file_export: bool = False,
+) -> None:
+    """Export as parent + nested child MLflow runs.
+
+    Raises:
+        ExportFailedException: If the export fails
+    """
+    import sys
+    import traceback
+
+    import click
+
+    from projects.caliper.engine.file_export import mlflow_backend
+    from projects.caliper.engine.file_export.artifacts_export_run import (
+        merge_mlflow_files_with_cli,
+        write_artifacts_status_yaml,
+    )
+    from projects.caliper.engine.file_export.mlflow_secrets import (
+        load_mlflow_secrets_yaml,
+        project_secrets_fields,
+        validate_mlflow_secrets,
+    )
+    from projects.caliper.engine.model import FileExportBackendResult
+
+    logger.info("Multi-run export: %d test run(s) detected", len(run_dirs))
+
+    all_artifact_paths = [p for p in from_path.rglob("*") if p.is_file()]
+
+    # Apply censoring for multi-run export if enabled
+    censoring_occurred = orchestration_apply_censoring(from_path, export_cfg, disable_censoring)
+
+    # Update artifact paths - use original paths since we modified in-place
+    all_artifact_paths = [p for p in from_path.rglob("*") if p.is_file()]
+
+    secrets_data = None
+    if mlflow_secrets_path is not None:
+        secrets_data = load_mlflow_secrets_yaml(mlflow_secrets_path)
+        validate_mlflow_secrets(secrets_data)
+
+    merged_ml = merge_mlflow_files_with_cli(
+        None,
+        secrets_data=secrets_data,
+        config_data=mlflow_config_data,
+        cli_tracking_uri=None,
+        cli_experiment=export_cfg.mlflow_experiment,
+        cli_run_id=None,
+        cli_run_name=export_cfg.mlflow_run_name,
+    )
+
+    secret_part = project_secrets_fields(merged_ml)
+    mlflow_connection = secret_part if secret_part else None
+
+    tracking_uri = merged_ml.get("tracking_uri")
+    experiment = merged_ml.get("experiment")
+    run_name = resolved_parent_name or merged_ml.get("run_name")
+    workspace = merged_ml.get("workspace")
+    if not workspace:
+        raise ValueError("The export workspace must be specified")
+
+    meta = project_metadata_fields(merged_ml)
+    run_metadata = meta if meta else None
+
+    insecure_tls = bool(mlflow_connection and mlflow_connection.get("insecure_tls"))
+
+    if export_cfg.verbose:
+        click.echo("caliper multi-run export (verbose)", err=True)
+        click.echo(f"  Source: {from_path}", err=True)
+        click.echo(f"  Total artifact files: {len(all_artifact_paths)}", err=True)
+        click.echo(f"  Run directories: {len(run_dirs)}", err=True)
+        click.echo(f"  Workspace: {workspace}", err=True)
+        for rd in run_dirs:
+            click.echo(f"    - {rd.name}", err=True)
+        click.echo("", err=True)
+
+    try:
+        if disable_file_export:
+            # Create mock results for notifications
+            detail = ""
+            ml_meta = {
+                "run_id": "mock-multi-run-disabled-export",
+                "experiment_url": "http://DRY_RUN_MLFLOW_FAKE_URL/#/experiments/disabled",
+                "run_url": "http://DRY_RUN_MLFLOW_FAKE_URL/#/experiments/disabled/runs/mock-multi-run-disabled-export",
+                "tracking_uri": "http://DRY_RUN_MLFLOW_FAKE_URL",
+            }
+            results = [
+                FileExportBackendResult(
+                    backend="mlflow",
+                    status="success",
+                    detail=detail,
+                    metadata=ml_meta,
+                )
+            ]
+        else:
+            detail, ml_meta = mlflow_backend.log_multi_run_artifacts(
+                all_artifact_paths=all_artifact_paths,
+                artifact_root=from_path,
+                run_dirs=run_dirs,
+                metrics_file=METRICS_FILE,
+                parameters_file=PARAMETERS_FILE,
+                tracking_uri=tracking_uri,
+                experiment=experiment,
+                parent_run_name=run_name,
+                insecure_tls=insecure_tls,
+                connection=mlflow_connection,
+                verbose=export_cfg.verbose,
+                upload_workers=export_cfg.upload_workers,
+                run_metadata=run_metadata,
+                workspace=workspace,
+                child_run_names=child_run_names or None,
+            )
+            results = [
+                FileExportBackendResult(
+                    backend="mlflow",
+                    status="success",
+                    detail=detail,
+                    metadata=ml_meta,
+                )
+            ]
+    except Exception as e:
+        traceback.print_exception(e, file=sys.stderr)
+        click.echo(f"multi-run export failed: {e}", err=True)
+        results = [FileExportBackendResult(backend="mlflow", status="failure", detail=str(e))]
+
+    if not disable_file_export:
+        for r in results:
+            click.echo(f"{r.backend}: {r.status} {r.detail}")
+
+    if status_yaml is not None:
+        try:
+            write_artifacts_status_yaml(status_yaml, results)
+
+            # Add censoring information to the status file
+            with open(status_yaml) as f:
+                status_data = yaml.safe_load(f)
+            status_data["censoring_occurred"] = censoring_occurred
+            with open(status_yaml, "w") as f:
+                yaml.dump(status_data, f, indent=4)
+
+            if not disable_file_export:
+                click.echo(f"Wrote status YAML to {status_yaml}")
+        except OSError as e:
+            click.echo(f"Failed to write status YAML ({status_yaml}): {e}", err=True)
+            raise ExportFailedException(f"Failed to write status YAML: {e}") from None
+
+    if any(r.status == "failure" for r in results):
+        raise ExportFailedException("MLflow backend export failed")

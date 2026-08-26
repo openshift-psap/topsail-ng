@@ -21,6 +21,32 @@ from .censoring_rules import (
 logger = logging.getLogger(__name__)
 
 
+def _merge_overlapping_spans(spans: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """Merge overlapping or adjacent (start, end) spans into non-overlapping spans.
+
+    Args:
+        spans: List of (start, end) tuples representing character ranges.
+
+    Returns:
+        Sorted list of merged (start, end) tuples with no overlaps.
+    """
+    if not spans:
+        return []
+
+    sorted_spans = sorted(spans)
+    merged = [sorted_spans[0]]
+
+    for start, end in sorted_spans[1:]:
+        prev_start, prev_end = merged[-1]
+        if start <= prev_end:
+            # Overlapping or adjacent — extend the previous span
+            merged[-1] = (prev_start, max(prev_end, end))
+        else:
+            merged.append((start, end))
+
+    return merged
+
+
 @dataclass
 class CensoringResult:
     """Result of censoring operation on a single file."""
@@ -153,18 +179,17 @@ class ArtifactCensor:
                     matched_patterns.add(i)
 
             if keyword_detected:
-                # Replace all matched spans with redacted text, preserving other content
-                # Process patterns in reverse order by position to maintain string indices
-                all_matches = []
-                for i, pattern in enumerate(COMPILED_KEYWORD_PATTERNS):
+                # Collect all match spans from all patterns
+                all_spans = []
+                for pattern in COMPILED_KEYWORD_PATTERNS:
                     for match in pattern.finditer(content):
-                        all_matches.append((match.start(), match.end(), i))
+                        all_spans.append((match.start(), match.end()))
 
-                # Sort by start position in reverse order
-                all_matches.sort(reverse=True)
+                # Merge overlapping spans to avoid corrupting replacements
+                merged_spans = _merge_overlapping_spans(all_spans)
 
-                # Replace each match with [REDACTED]
-                for start, end, _pattern_idx in all_matches:
+                # Replace merged spans in reverse order to preserve string indices
+                for start, end in reversed(merged_spans):
                     content = content[:start] + "[REDACTED]" + content[end:]
 
                 # Add reasons for all matched patterns

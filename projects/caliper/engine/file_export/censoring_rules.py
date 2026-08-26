@@ -24,9 +24,8 @@ KEYWORD_PATTERNS = [
     r"secret[_-]?token\s*[:=]\s*\S+",
     r"access[_-]?token\s*[:=]\s*\S+",
     r"refresh[_-]?token\s*[:=]\s*\S+",
-    # Bearer tokens
+    # Bearer tokens (compiled with IGNORECASE, so one pattern covers both cases)
     r"Bearer\s+[A-Za-z0-9+/=]+",
-    r"bearer\s+[A-Za-z0-9+/=]+",
     # Specific service API keys
     r"sk-[a-zA-Z0-9]{32,}",  # OpenAI API keys
     r"ghp_[a-zA-Z0-9]{36}",  # GitHub personal access tokens
@@ -106,22 +105,3 @@ def matches_sensitive_filename(filename: str) -> bool:
                 return True
 
     return False
-
-
-def find_sensitive_content_in_text(content: str) -> list[str]:
-    """
-    Find sensitive content patterns in text.
-
-    Args:
-        content: Text content to scan
-
-    Returns:
-        list[str]: List of pattern descriptions that matched
-    """
-    matches = []
-    for i, pattern in enumerate(COMPILED_KEYWORD_PATTERNS):
-        if pattern.search(content):
-            # Return the original pattern string for logging
-            matches.append(KEYWORD_PATTERNS[i])
-
-    return matches

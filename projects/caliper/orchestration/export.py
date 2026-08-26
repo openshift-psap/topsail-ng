@@ -254,6 +254,12 @@ def run_from_orchestration_config(
             logger.info(
                 "dry-run: would export %d run dirs from %s (skipping)", len(run_dirs), from_path
             )
+            return {
+                "success": True,
+                "final_status": "dry-run",
+                "dry_run": True,
+                "run_dirs": len(run_dirs),
+            }
         else:
             _run_multi_run_export(
                 export_cfg=export_cfg,
@@ -599,12 +605,10 @@ def _run_multi_run_export(
 
     logger.info("Multi-run export: %d test run(s) detected", len(run_dirs))
 
-    all_artifact_paths = [p for p in from_path.rglob("*") if p.is_file()]
-
     # Apply censoring for multi-run export if enabled
     censoring_occurred = orchestration_apply_censoring(from_path, export_cfg, disable_censoring)
 
-    # Update artifact paths - use original paths since we modified in-place
+    # Collect artifact paths after censoring (files may have been modified in-place)
     all_artifact_paths = [p for p in from_path.rglob("*") if p.is_file()]
 
     secrets_data = None

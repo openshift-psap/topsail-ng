@@ -32,8 +32,17 @@ def _censor_notification_text(text: str, verbose: bool = False) -> str:
 
     Returns:
         Censored notification text with sensitive content replaced
+
+    Raises:
+        Exception: If vault discovery fails, preventing notification delivery
     """
-    return censor_text(text, verbose=verbose)
+    try:
+        return censor_text(text, verbose=verbose)
+    except Exception as e:
+        logger.error(f"Censoring failed during notification preparation: {e}")
+        # Re-raise to abort GitHub and Slack notification delivery
+        # rather than sending potentially uncensored text
+        raise
 
 
 def send_notification(
@@ -63,7 +72,11 @@ def send_notification(
     )
 
     # Apply censoring to notification content before sending
-    notification_status = _censor_notification_text(notification_status, verbose=dry_run)
+    try:
+        notification_status = _censor_notification_text(notification_status, verbose=dry_run)
+    except Exception as e:
+        logger.error(f"Notification censoring failed, aborting notification delivery: {e}")
+        return False
 
     # Send actual notifications
     if dry_run:
@@ -125,23 +138,31 @@ def send_notification(
 
                 artifact_dir = Path(env.ARTIFACT_DIR) if env.ARTIFACT_DIR else None
                 # Censor status fields before creating NotificationContext
-                censored_status = yaml.safe_load(
-                    _censor_notification_text(yaml.dump(status), verbose=dry_run)
-                )
-                context = NotificationContext(
-                    status=censored_status,
-                    finish_reason=str(finish_reason),
-                    project_name=project or "unknown",
-                    pr_number=os.environ.get("PULL_NUMBER"),
-                    job_type=os.environ.get("JOB_TYPE"),
-                    artifact_dir=artifact_dir,
-                )
-                ok = notification_provider.notify(context)
-                if ok:
-                    logger.info("Successfully sent per-project Slack notification")
-                else:
-                    logger.warning("Per-project Slack notification failed")
+                try:
+                    censored_status = yaml.safe_load(
+                        _censor_notification_text(yaml.dump(status), verbose=dry_run)
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"Slack notification censoring failed, aborting Slack notification: {e}"
+                    )
                     notification_success = False
+                else:
+                    # Only proceed with Slack notification if censoring succeeded
+                    context = NotificationContext(
+                        status=censored_status,
+                        finish_reason=str(finish_reason),
+                        project_name=project or "unknown",
+                        pr_number=os.environ.get("PULL_NUMBER"),
+                        job_type=os.environ.get("JOB_TYPE"),
+                        artifact_dir=artifact_dir,
+                    )
+                    ok = notification_provider.notify(context)
+                    if ok:
+                        logger.info("Successfully sent per-project Slack notification")
+                    else:
+                        logger.warning("Per-project Slack notification failed")
+                        notification_success = False
             except Exception as e:
                 logger.warning(f"Failed to send per-project Slack notification: {e}")
                 notification_success = False

@@ -104,12 +104,36 @@ def censor_text(text: str, verbose: bool = False) -> str:
     censored_text = text
     replacements_made = 0
 
+    # Import keyword patterns for content censoring (always try this first)
+    from projects.caliper.engine.file_export.censoring_rules import (
+        COMPILED_KEYWORD_PATTERNS,
+        KEYWORD_PATTERNS,
+    )
+
+    # Apply keyword pattern censoring first (preserve this even if vault discovery fails)
+    for i, pattern in enumerate(COMPILED_KEYWORD_PATTERNS):
+        matches = list(pattern.finditer(censored_text))
+        if matches:
+            # Replace all matched spans with redacted text, preserving other content
+            # Process patterns in reverse order by position to maintain string indices
+            for match in reversed(matches):
+                censored_text = (
+                    censored_text[: match.start()] + "[REDACTED]" + censored_text[match.end() :]
+                )
+                replacements_made += 1
+
+            if verbose:
+                logger.info(
+                    f"Censored {len(matches)} instances of pattern '{KEYWORD_PATTERNS[i]}' in text"
+                )
+
+    # Now try vault secrets discovery and censoring
     try:
         # Discover vault secrets for censoring
         vault_secrets, secret_mapping = discover_vault_secrets(verbose=verbose)
         # /!\ secret_mapping contains the secret values. Process with extra care.
 
-        # Replace vault secrets first (more specific)
+        # Replace vault secrets (more specific)
         for secret in vault_secrets:
             if secret and secret.strip() and secret.strip() in censored_text:
                 censored_text = censored_text.replace(secret.strip(), "[REDACTED-VAULT]")
@@ -118,38 +142,16 @@ def censor_text(text: str, verbose: bool = False) -> str:
                     vault_identifier = secret_mapping.get(secret.strip(), "unknown vault")
                     logger.info(f"Censored vault secret from {vault_identifier} in text")
 
-        # Import keyword patterns for content censoring
-        from projects.caliper.engine.file_export.censoring_rules import (
-            COMPILED_KEYWORD_PATTERNS,
-            KEYWORD_PATTERNS,
-        )
-
-        # Apply keyword pattern censoring
-        for i, pattern in enumerate(COMPILED_KEYWORD_PATTERNS):
-            matches = list(pattern.finditer(censored_text))
-            if matches:
-                # Replace all matched spans with redacted text, preserving other content
-                # Process patterns in reverse order by position to maintain string indices
-                for match in reversed(matches):
-                    censored_text = (
-                        censored_text[: match.start()] + "[REDACTED]" + censored_text[match.end() :]
-                    )
-                    replacements_made += 1
-
-                if verbose:
-                    logger.info(
-                        f"Censored {len(matches)} instances of pattern '{KEYWORD_PATTERNS[i]}' in text"
-                    )
-
         if replacements_made > 0:
             logger.info(f"Censored {replacements_made} sensitive items from text")
         elif verbose:
             logger.info("No sensitive content found in text")
 
     except Exception as e:
-        logger.warning(f"Error during text censoring: {e}")
-        # On error, add a warning to the text
-        censored_text += "\n\n> ⚠️ **Note**: Automatic content censoring encountered an error. Please review this content manually for sensitive information."
+        logger.error(f"Failed to discover vault secrets during text censoring: {e}")
+        # Propagate the vault discovery failure after keyword censoring is complete
+        # This allows _censor_notification_text to handle the failure appropriately
+        raise
 
     return censored_text
 

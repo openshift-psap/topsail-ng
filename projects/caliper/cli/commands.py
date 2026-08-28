@@ -1407,9 +1407,36 @@ def artifacts_censor(
 
     click.echo(f"Scanning {len(all_artifact_paths)} artifacts in {from_path}")
 
-    # Apply censoring
+    # Determine which files to censor based on output_path
+    if output_path:
+        # Copy source tree to output directory first, then censor the copy
+        if not dry_run:
+            try:
+                if output_path.exists():
+                    import shutil
+
+                    shutil.rmtree(output_path)
+                shutil.copytree(from_path, output_path)
+                click.echo(f"Copied source tree to {output_path}")
+            except Exception as e:
+                click.echo(f"Error copying source tree: {e}", err=True)
+                sys.exit(1)
+        else:
+            click.echo(f"Dry run: Would copy source tree to {output_path}")
+
+        # Get corresponding files in the output directory for censoring
+        artifact_paths_to_censor = [
+            output_path / p.relative_to(from_path) for p in all_artifact_paths
+        ]
+        censoring_source_path = output_path
+    else:
+        # Use original files for in-place censoring
+        artifact_paths_to_censor = all_artifact_paths
+        censoring_source_path = from_path
+
+    # Apply censoring to the target files (copy or original)
     filtered_paths, censoring_results = apply_censoring_to_artifacts(
-        all_artifact_paths, censoring_enabled=True, verbose=verbose, dry_run=dry_run
+        artifact_paths_to_censor, censoring_enabled=True, verbose=verbose, dry_run=dry_run
     )
 
     # Separate results: excluded (fully censored), sanitized (redacted in-place), and clean
@@ -1429,13 +1456,13 @@ def artifacts_censor(
             click.echo("\nSanitized files (redacted in-place, kept):")
             for result in censoring_results:
                 if result.sanitized:
-                    rel_path = result.file_path.relative_to(from_path)
+                    rel_path = result.file_path.relative_to(censoring_source_path)
                     click.echo(f"  - {rel_path}: {result.reason}")
         if excluded_files:
             click.echo("\nExcluded files (to be removed):")
             for result in censoring_results:
                 if result.censored and not result.sanitized:
-                    rel_path = result.file_path.relative_to(from_path)
+                    rel_path = result.file_path.relative_to(censoring_source_path)
                     click.echo(f"  - {rel_path}: {result.reason}")
 
     # Generate report if requested
@@ -1450,7 +1477,7 @@ def artifacts_censor(
             "excluded_files": len(excluded_files),
             "sanitized_details": [
                 {
-                    "file": str(r.file_path.relative_to(from_path)),
+                    "file": str(r.file_path.relative_to(censoring_source_path)),
                     "reason": r.reason,
                 }
                 for r in censoring_results
@@ -1458,7 +1485,7 @@ def artifacts_censor(
             ],
             "excluded_details": [
                 {
-                    "file": str(r.file_path.relative_to(from_path)),
+                    "file": str(r.file_path.relative_to(censoring_source_path)),
                     "reason": r.reason,
                 }
                 for r in censoring_results
@@ -1484,27 +1511,34 @@ def artifacts_censor(
         click.echo("\nDry run: No files were modified")
         if output_path:
             kept_count = len(clean_files) + len(sanitized_files)
-            click.echo(f"Would copy {kept_count} files to {output_path}")
+            click.echo(
+                f"Would copy source tree to {output_path} and remove {len(excluded_files)} excluded files"
+            )
         else:
             click.echo(f"Would remove {len(excluded_files)} excluded files from {from_path}")
 
     elif output_path:
-        # Copy clean and sanitized files to output directory (exclude only truly excluded files)
-        kept_files = clean_files + sanitized_files
-        try:
-            output_path.mkdir(parents=True, exist_ok=True)
+        # Files have already been copied and censored in the output directory
+        # Now remove excluded files from the output directory
+        if excluded_files:
+            try:
+                for excluded_file in excluded_files:
+                    excluded_file.unlink()
+                    if verbose:
+                        rel_path = excluded_file.relative_to(output_path)
+                        click.echo(f"  Removed from output: {rel_path}")
 
-            for kept_file in kept_files:
-                rel_path = kept_file.relative_to(from_path)
-                dest_path = output_path / rel_path
-                dest_path.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(kept_file, dest_path)
+                kept_count = len(clean_files) + len(sanitized_files)
+                click.echo(
+                    f"\nProcessed artifacts in {output_path}: {kept_count} kept, {len(excluded_files)} removed"
+                )
 
-            click.echo(f"\nCopied {len(kept_files)} files to {output_path}")
-
-        except Exception as e:
-            click.echo(f"Error copying files: {e}", err=True)
-            sys.exit(1)
+            except Exception as e:
+                click.echo(f"Error removing excluded files from output: {e}", err=True)
+                sys.exit(1)
+        else:
+            kept_count = len(clean_files) + len(sanitized_files)
+            click.echo(f"\nProcessed artifacts in {output_path}: {kept_count} files, all clean!")
 
     else:
         # Remove only excluded files in-place (sanitized files are already redacted and kept)

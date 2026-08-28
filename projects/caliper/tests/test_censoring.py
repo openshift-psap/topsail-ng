@@ -156,7 +156,8 @@ class TestKeywordPatterns:
         assert self._matches_any_pattern("api-secret=supersecret")
 
     def test_token_pattern(self):
-        assert self._matches_any_pattern("token=eyJhbGciOiJIUzI1NiJ9")
+        # Test specific token patterns that are enabled (general token= is disabled)
+        assert self._matches_any_pattern("api_token=eyJhbGciOiJIUzI1NiJ9")
 
     def test_bearer_token(self):
         assert self._matches_any_pattern("Bearer eyJhbGciOiJIUzI1NiJ9")
@@ -390,9 +391,7 @@ class TestApplyCensoringToArtifacts:
         f = tmp_path / "secret.pem"
         f.write_text("private key data\n", encoding="utf-8")
 
-        paths, results = apply_censoring_to_artifacts(
-            [f], censoring_enabled=False, verbose=True
-        )
+        paths, results = apply_censoring_to_artifacts([f], censoring_enabled=False, verbose=True)
 
         assert f in paths
         assert len(results) == 0
@@ -434,9 +433,7 @@ class TestApplyCensoringToArtifacts:
         original = "password=secret123\n"
         f.write_text(original, encoding="utf-8")
 
-        processed, results = apply_censoring_to_artifacts(
-            [f], censoring_enabled=True, dry_run=True
-        )
+        processed, results = apply_censoring_to_artifacts([f], censoring_enabled=True, dry_run=True)
 
         # File content should be unchanged in dry run
         assert f.read_text() == original
@@ -468,9 +465,7 @@ class TestApplyCensoringToArtifacts:
         sensitive = tmp_path / "app.cfg"
         sensitive.write_text("api_key=abc\n", encoding="utf-8")
 
-        _, results = apply_censoring_to_artifacts(
-            [clean, sensitive], censoring_enabled=True
-        )
+        _, results = apply_censoring_to_artifacts([clean, sensitive], censoring_enabled=True)
 
         sanitized_count = len([r for r in results if r.sanitized])
         excluded_count = len([r for r in results if r.censored and not r.sanitized])

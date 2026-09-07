@@ -72,6 +72,7 @@ class ArtifactCensor:
         self,
         vault_secrets: set[str] | None = None,
         secret_mapping: dict[str, str] | None = None,
+        censor_text_mapping: dict[str, str] | None = None,
         verbose: bool = False,
         dry_run: bool = False,
     ):
@@ -81,11 +82,13 @@ class ArtifactCensor:
         Args:
             vault_secrets: Set of secret strings loaded from vaults
             secret_mapping: Dict mapping secret strings to vault/content identifiers
+            censor_text_mapping: Dict mapping secret strings to censor_text replacements
             verbose: Enable verbose logging
             dry_run: Skip file modifications while preserving analysis
         """
         self.vault_secrets = vault_secrets or set()
         self.secret_mapping = secret_mapping or {}
+        self.censor_text_mapping = censor_text_mapping or {}
         self.verbose = verbose
         self.dry_run = dry_run
 
@@ -201,10 +204,15 @@ class ArtifactCensor:
             # Always check for vault secrets, independent of keyword pattern detection
             for secret in self.vault_secrets:
                 if secret and secret.strip() and secret.strip() in content:
-                    content = content.replace(secret.strip(), "*******")
+                    # Use censor_text if available, otherwise use [REDACTED-VAULT]
+                    replacement = self.censor_text_mapping.get(secret.strip(), "[REDACTED-VAULT]")
+                    content = content.replace(secret.strip(), replacement)
                     sanitized = True
-                    vault_identifier = self.secret_mapping.get(secret.strip(), "unknown vault")
-                    reasons.append(f"contains vault secret: {vault_identifier}")
+
+                    # Only add to reasons if not using censor_text (unexpected vault content)
+                    if secret.strip() not in self.censor_text_mapping:
+                        vault_identifier = self.secret_mapping.get(secret.strip(), "unknown vault")
+                        reasons.append(f"contains vault secret: {vault_identifier}")
 
             if sanitized:
                 # Write sanitized content back to original file (skip if dry run)
@@ -277,6 +285,7 @@ def apply_censoring_to_artifacts(
     verbose: bool = False,
     vault_secrets: set[str] | None = None,
     secret_mapping: dict[str, str] | None = None,
+    censor_text_mapping: dict[str, str] | None = None,
     dry_run: bool = False,
 ) -> tuple[list[Path], list[CensoringResult]]:
     """
@@ -284,7 +293,7 @@ def apply_censoring_to_artifacts(
 
     This function processes artifacts by:
     - Replacing sensitive content patterns with "Content censored by caliper" in-place
-    - Replacing vault secrets with "*******" in-place
+    - Replacing vault secrets with "*******" or censor_text if available in-place
     - Excluding files with sensitive filename patterns (.pem, .key, files with "secret" in name, etc.)
 
     Args:
@@ -293,6 +302,7 @@ def apply_censoring_to_artifacts(
         verbose: Enable verbose logging
         vault_secrets: Set of vault secret strings to censor
         secret_mapping: Dict mapping secret strings to vault/content identifiers
+        censor_text_mapping: Dict mapping secret strings to censor_text replacements
         dry_run: Skip file modifications while preserving analysis
 
     Returns:
@@ -309,6 +319,7 @@ def apply_censoring_to_artifacts(
     censor = ArtifactCensor(
         vault_secrets=vault_secrets or set(),
         secret_mapping=secret_mapping or {},
+        censor_text_mapping=censor_text_mapping or {},
         verbose=verbose,
         dry_run=dry_run,
     )

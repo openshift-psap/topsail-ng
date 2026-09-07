@@ -21,7 +21,9 @@ from projects.core.library import vault as vault_lib
 logger = logging.getLogger(__name__)
 
 
-def discover_vault_secrets(verbose: bool = False) -> tuple[set[str], dict[str, str]]:
+def discover_vault_secrets(
+    verbose: bool = False,
+) -> tuple[set[str], dict[str, str], dict[str, str]]:
     """
     Discover all vault secrets for censoring (all vault content is treated as sensitive).
 
@@ -29,12 +31,14 @@ def discover_vault_secrets(verbose: bool = False) -> tuple[set[str], dict[str, s
         verbose: Enable verbose logging
 
     Returns:
-        Tuple of (secret_strings, secret_mapping) where:
+        Tuple of (secret_strings, secret_mapping, censor_text_mapping) where:
         - secret_strings: Set of secret strings loaded from vaults
         - secret_mapping: Dict mapping secret string -> vault/content identifier
+        - censor_text_mapping: Dict mapping secret string -> censor_text replacement (if available)
     """
     vault_secrets = set()
     secret_mapping = {}
+    censor_text_mapping = {}
 
     try:
         vault_manager = vault_lib.get_vault_manager()
@@ -58,24 +62,67 @@ def discover_vault_secrets(verbose: bool = False) -> tuple[set[str], dict[str, s
                         )
                     continue
 
-                content_path = vault_manager.get_vault_content_path(vault_name, content_name)
-                if not (content_path and content_path.exists()):
-                    logger.warning(f"Invalid vault found: {vault_name} {content_name} (missing)")
-                    continue
+                # If censor_text is available, use it directly instead of reading file
+                if content_def.censor_text:
+                    content_path = vault_manager.get_vault_content_path(vault_name, content_name)
+                    if not (content_path and content_path.exists()):
+                        logger.warning(
+                            f"Invalid vault found: {vault_name} {content_name} (missing)"
+                        )
+                        continue
 
-                try:
-                    # Read vault content (assume it's text)
-                    content_text = content_path.read_text(encoding="utf-8", errors="ignore").strip()
-                    if not content_text:
-                        logger.warning(f"Invalid vault found: {vault_name} {content_name} (empty)")
-                    else:
-                        vault_secrets.add(content_text)
-                        secret_mapping[content_text] = f"{vault_name}/{content_name}"
-                        secrets_discovered += 1
-                        if verbose:
-                            logger.info(f"Discovered secret from vault {vault_name}/{content_name}")
-                except Exception as e:
-                    logger.warning(f"Failed to read vault content {vault_name}/{content_name}: {e}")
+                    try:
+                        # Read actual vault content
+                        content_text = content_path.read_text(
+                            encoding="utf-8", errors="ignore"
+                        ).strip()
+                        if not content_text:
+                            logger.warning(
+                                f"Invalid vault found: {vault_name} {content_name} (empty)"
+                            )
+                        else:
+                            vault_secrets.add(content_text)
+                            secret_mapping[content_text] = f"{vault_name}/{content_name}"
+                            censor_text_mapping[content_text] = content_def.censor_text
+                            secrets_discovered += 1
+                            if verbose:
+                                logger.info(
+                                    f"Discovered secret from vault {vault_name}/{content_name} with censor_text"
+                                )
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to read vault content {vault_name}/{content_name}: {e}"
+                        )
+                else:
+                    # No censor_text, read file content for traditional censoring
+                    content_path = vault_manager.get_vault_content_path(vault_name, content_name)
+                    if not (content_path and content_path.exists()):
+                        logger.warning(
+                            f"Invalid vault found: {vault_name} {content_name} (missing)"
+                        )
+                        continue
+
+                    try:
+                        # Read vault content (assume it's text)
+                        content_text = content_path.read_text(
+                            encoding="utf-8", errors="ignore"
+                        ).strip()
+                        if not content_text:
+                            logger.warning(
+                                f"Invalid vault found: {vault_name} {content_name} (empty)"
+                            )
+                        else:
+                            vault_secrets.add(content_text)
+                            secret_mapping[content_text] = f"{vault_name}/{content_name}"
+                            secrets_discovered += 1
+                            if verbose:
+                                logger.info(
+                                    f"Discovered secret from vault {vault_name}/{content_name}"
+                                )
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to read vault content {vault_name}/{content_name}: {e}"
+                        )
 
         if verbose:
             logger.info(f"Discovered {secrets_discovered} vault secrets for censoring")
@@ -84,7 +131,7 @@ def discover_vault_secrets(verbose: bool = False) -> tuple[set[str], dict[str, s
         logger.exception(f"Failed to discover vault secrets: {e}")
         raise
 
-    return vault_secrets, secret_mapping
+    return vault_secrets, secret_mapping, censor_text_mapping
 
 
 def censor_text(text: str, verbose: bool = False) -> str:
@@ -130,17 +177,25 @@ def censor_text(text: str, verbose: bool = False) -> str:
     # Now try vault secrets discovery and censoring
     try:
         # Discover vault secrets for censoring
-        vault_secrets, secret_mapping = discover_vault_secrets(verbose=verbose)
+        vault_secrets, secret_mapping, censor_text_mapping = discover_vault_secrets(verbose=verbose)
         # /!\ secret_mapping contains the secret values. Process with extra care.
 
         # Replace vault secrets (more specific)
         for secret in vault_secrets:
             if secret and secret.strip() and secret.strip() in censored_text:
-                censored_text = censored_text.replace(secret.strip(), "[REDACTED-VAULT]")
-                replacements_made += 1
-                if verbose:
+                # Use censor_text if available, otherwise use [REDACTED-VAULT]
+                replacement = censor_text_mapping.get(secret.strip(), "[REDACTED-VAULT]")
+                censored_text = censored_text.replace(secret.strip(), replacement)
+
+                # Only count as replacement and report if not using censor_text (unexpected vault content)
+                if secret.strip() not in censor_text_mapping:
+                    replacements_made += 1
+                    if verbose:
+                        vault_identifier = secret_mapping.get(secret.strip(), "unknown vault")
+                        logger.info(f"Censored vault secret from {vault_identifier} in text")
+                elif verbose:
                     vault_identifier = secret_mapping.get(secret.strip(), "unknown vault")
-                    logger.info(f"Censored vault secret from {vault_identifier} in text")
+                    logger.info(f"Applied censor_text replacement for {vault_identifier} in text")
 
         if replacements_made > 0:
             logger.info(f"Censored {replacements_made} sensitive items from text")
@@ -178,7 +233,9 @@ def orchestration_apply_censoring(
         return False
 
     # Discover vault secrets
-    vault_secrets, secret_mapping = discover_vault_secrets(verbose=export_cfg.verbose)
+    vault_secrets, secret_mapping, censor_text_mapping = discover_vault_secrets(
+        verbose=export_cfg.verbose
+    )
     # /!\ secret_mapping contains the secret values. Process with extra care.
 
     # Collect all artifact files
@@ -195,6 +252,7 @@ def orchestration_apply_censoring(
         verbose=export_cfg.verbose,
         vault_secrets=vault_secrets,
         secret_mapping=secret_mapping,
+        censor_text_mapping=censor_text_mapping,
     )
 
     # Separate results by type

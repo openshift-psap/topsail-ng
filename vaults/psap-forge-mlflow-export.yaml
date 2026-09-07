@@ -13,6 +13,7 @@ content:
       insecure_tls: true
 
   tracking_uri:
+    censor_text: "https://mlflow_tracking_uri_hidden"
     description: |
       the URI of the MLFlow endpoint, so that the CI engine can censor it in the logs
 

@@ -32,6 +32,7 @@ class VaultContent:
     description: str
     filename: str | None = None
     sensible: bool = True
+    censor_text: str | None = None
     _vault: Optional["VaultDefinition"] = None
 
     def __post_init__(self):
@@ -109,19 +110,20 @@ class VaultManager:
         # Parse content definitions
         content = {}
         for content_name, content_def in data.get("content", {}).items():
-            if isinstance(content_def, dict):
-                # New format with file mapping and description
-                filename = content_def.get("file", content_name)
-                description = content_def.get("description", "")  # Don't provide default
-                sensible = content_def.get("sensible", True)  # Default to True
-            else:
-                # Legacy format - content_def is the description
-                filename = content_name
-                description = content_def if content_def else ""
-                sensible = True  # Sensible by default
+            if not isinstance(content_def, dict):
+                raise ValueError(f"Vault content '{content_name}' must be a dictionary")
+
+            filename = content_def.get("file", content_name)
+            description = content_def.get("description", "")
+            sensible = content_def.get("sensible", True)
+            censor_text = content_def.get("censor_text")
 
             content[content_name] = VaultContent(
-                name=content_name, description=description, filename=filename, sensible=sensible
+                name=content_name,
+                description=description,
+                filename=filename,
+                sensible=sensible,
+                censor_text=censor_text,
             )
 
         vault_def = VaultDefinition(

@@ -19,10 +19,11 @@ KEYWORD_PATTERNS = [
     r"api[_-]?key\s*[:=]\s*\S+",
     r"apikey\s*[:=]\s*\S+",
     r"api[_-]?secret\s*[:=]\s*\S+",
-    # Token patterns
-    r"token\s*[:=]\s*\S+",
+    # Token patterns (exclude version specifiers like ==0.14.0)
+    r"(?:^|[^a-zA-Z])token\s*[:=]\s*(?![=~<>])\S+",
     r"secret[_-]?token\s*[:=]\s*\S+",
     r"access[_-]?token\s*[:=]\s*\S+",
+    r"api[_-]?token\s*[:=]\s*\S+",
     r"refresh[_-]?token\s*[:=]\s*\S+",
     # Bearer tokens (compiled with IGNORECASE, so one pattern covers both cases)
     r"Bearer\s+[A-Za-z0-9+/=]+",

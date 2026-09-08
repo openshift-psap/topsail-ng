@@ -1,0 +1,13 @@
+__multiple: true
+
+# SGLang quick CI test - lightweight test with small model
+sglang-ci-quick:
+  extends:
+    - sglang
+  tests.rhaiis.model_key: qwen3-0_6b
+  tests.rhaiis.workload_keys: ["ci-quick"]
+  workloads.ci-quick.rates: [1, 50, 100]
+  tests.rhaiis.warmup: false
+  rhaiis.profiler.enabled: false
+  caliper.postprocess.csv_dashboard.enabled: true
+  rhaiis.agent_analysis.enabled: false

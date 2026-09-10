@@ -58,6 +58,8 @@ def apply_manifests(args, ctx):
         args.api_group,
     )
 
+    crd_version = _detect_crd_storage_version(f"mcpserverregistrations.{args.api_group}")
+
     all_manifests = []
     for i in range(1, args.count + 1):
         server_name = f"{args.name_prefix}-{i}"
@@ -72,6 +74,7 @@ def apply_manifests(args, ctx):
             gateway_namespace=args.gateway_namespace,
             gateway_name=args.gateway_name,
             api_group=args.api_group,
+            crd_version=crd_version,
         )
         all_manifests.append(manifest)
 
@@ -155,6 +158,32 @@ def capture_artifacts(args, ctx):
 # ---------------------------------------------------------------------------
 
 
+def _detect_crd_storage_version(crd_name: str, default: str = "v1alpha1") -> str:
+    """Return the storage-served apiVersion of an installed CRD, e.g. "v1".
+
+    Reads it directly off the CRD object on the cluster rather than assuming
+    a fixed version, since the mcp-gateway chart has changed the served
+    version for these CRDs across releases.
+    """
+    result = oc(
+        "get",
+        "crd",
+        crd_name,
+        "--ignore-not-found",
+        "-o",
+        "jsonpath={.spec.versions[?(@.storage==true)].name}",
+        check=False,
+        log_stdout=False,
+    )
+    version = (result.stdout or "").strip()
+    if not version:
+        logger.warning(
+            "Could not detect storage version for CRD %s, defaulting to %s", crd_name, default
+        )
+        return default
+    return version
+
+
 def _count_ready_registrations(*, namespace: str, api_group: str = DEFAULT_API_GROUP) -> int:
     """Count MCPServerRegistrations with Ready=True condition."""
     result = oc(
@@ -183,6 +212,7 @@ def _generate_infrastructure_manifest(
     gateway_namespace: str,
     gateway_name: str,
     api_group: str = DEFAULT_API_GROUP,
+    crd_version: str = "v1alpha1",
 ) -> str:
     """Generate YAML manifest for HTTPRoute + DestinationRule + MCPServerRegistration."""
     labels = {
@@ -234,7 +264,7 @@ def _generate_infrastructure_manifest(
     prefix_field = "prefix" if api_group == "mcp.kuadrant.io" else "toolPrefix"
 
     mcp_registration = {
-        "apiVersion": f"{api_group}/v1alpha1",
+        "apiVersion": f"{api_group}/{crd_version}",
         "kind": "MCPServerRegistration",
         "metadata": {
             "name": server_name,

@@ -9,10 +9,14 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 import subprocess
 import time
 from pathlib import Path
+from typing import Any
+
+import yaml
 
 from projects.core.dsl.utils.k8s import oc, oc_resource_exists
 
@@ -22,6 +26,14 @@ _PLATFORM_REPO_DEFAULT = "https://github.com/Kuadrant/mcp-gateway.git"
 _PLATFORM_SUBDIR_DEFAULT = "config/openshift"
 _PLATFORM_CLONE_DIR = Path(os.environ.get("FORGE_BASE_DIR", "/tmp")) / "mcp-gw-platform-manifests"
 
+# Upstream mcp-gateway still pins EOL Istio (v1.26-latest). Current
+# servicemeshoperator3 / Sail rejects that for new installs.
+_DEFAULT_ISTIO_VERSION = "v1.30-latest"
+_ISTIO_VERSION_RE = re.compile(r"^(\s*version:\s*)\S+\s*$", re.MULTILINE)
+
+
+_RESOLVED_REF_MARKER = ".forge-resolved-ref"
+
 
 def clone_platform_repo(
     *,
@@ -29,15 +41,20 @@ def clone_platform_repo(
     repo_url: str = _PLATFORM_REPO_DEFAULT,
     subdir: str = _PLATFORM_SUBDIR_DEFAULT,
 ) -> Path:
-    """Sparse-checkout the platform manifests from the upstream mcp-gateway repo.
+    """Fetch the platform manifests from the upstream mcp-gateway repo at ``version``.
 
-    Uses ``version`` as the git ref (tag or branch). Falls back to ``main``
-    if the ref doesn't exist.  The checkout is shallow and only fetches the
-    ``subdir`` subtree to keep it fast.
+    ``version`` may be a branch, a tag, or a commit SHA. Each is fetched
+    directly by name/SHA (``git fetch --depth 1 origin <version>``), which
+    upstream Git hosts support for any ref or reachable commit. If that
+    fetch fails (e.g. the ref/commit doesn't exist), this falls back to the
+    repo's ``main`` branch so installs can still proceed with a warning.
 
-    The clone is placed under ``$FORGE_BASE_DIR/mcp-gw-platform-manifests/``
+    Only the ``subdir`` subtree is checked out (sparse checkout) to keep
+    this fast.
+
+    The checkout is placed under ``$FORGE_BASE_DIR/mcp-gw-platform-manifests/``
     (defaults to ``/tmp/mcp-gw-platform-manifests/``) so that subsequent
-    phases (e.g. cleanup) can reuse it without cloning again.  Call
+    phases (e.g. cleanup) can reuse it without re-fetching. Call
     :func:`cleanup_platform_clone` at the end of the last phase to remove it.
 
     Returns the absolute path to the checked-out subdirectory
@@ -48,54 +65,76 @@ def clone_platform_repo(
 
     if result_path.is_dir():
         cached_ref = _get_cached_ref(repo_dir)
-        requested_ref = _resolve_git_ref(repo_url, version)
-        if cached_ref and cached_ref != requested_ref:
-            logger.info(
-                "Cached clone ref (%s) differs from requested (%s), re-cloning",
-                cached_ref,
-                requested_ref,
-            )
-            shutil.rmtree(str(_PLATFORM_CLONE_DIR), ignore_errors=True)
-        else:
-            logger.info("Platform manifests already cloned at %s, reusing", result_path)
+        if cached_ref == version:
+            logger.info("Platform manifests already fetched at %s, reusing", result_path)
             return result_path
+        logger.info(
+            "Cached clone ref (%s) differs from requested (%s), re-fetching",
+            cached_ref,
+            version,
+        )
+        shutil.rmtree(str(_PLATFORM_CLONE_DIR), ignore_errors=True)
 
     _PLATFORM_CLONE_DIR.mkdir(parents=True, exist_ok=True)
+    repo_dir.mkdir(parents=True, exist_ok=True)
 
-    ref = _resolve_git_ref(repo_url, version)
+    subprocess.run(["git", "init", "-q", str(repo_dir)], check=True, timeout=30)
+    subprocess.run(
+        ["git", "-C", str(repo_dir), "remote", "add", "origin", repo_url],
+        check=True,
+        timeout=30,
+    )
+    subprocess.run(
+        ["git", "-C", str(repo_dir), "sparse-checkout", "set", subdir],
+        check=True,
+        timeout=30,
+    )
+
+    fetch_cmd = [
+        "git",
+        "-C",
+        str(repo_dir),
+        "fetch",
+        "--depth",
+        "1",
+        "--filter=blob:none",
+        "origin",
+    ]
+    fetched_ref = version
+    fetch_result = subprocess.run(
+        [*fetch_cmd, version],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    if fetch_result.returncode != 0:
+        logger.warning(
+            "Could not fetch '%s' from %s (%s) — falling back to 'main'",
+            version,
+            repo_url,
+            fetch_result.stderr.strip().splitlines()[-1]
+            if fetch_result.stderr
+            else "unknown error",
+        )
+        fetched_ref = "main"
+        subprocess.run([*fetch_cmd, "main"], check=True, timeout=120)
 
     logger.info(
-        "Cloning platform manifests from %s (ref=%s, subdir=%s)",
+        "Fetched platform manifests from %s (ref=%s, subdir=%s)",
         repo_url,
-        ref,
+        fetched_ref,
         subdir,
     )
     subprocess.run(
-        [
-            "git",
-            "clone",
-            "--depth",
-            "1",
-            "--filter=blob:none",
-            "--sparse",
-            "--branch",
-            ref,
-            repo_url,
-            str(repo_dir),
-        ],
-        check=True,
-        timeout=120,
-    )
-    subprocess.run(
-        ["git", "sparse-checkout", "set", subdir],
-        cwd=str(repo_dir),
+        ["git", "-C", str(repo_dir), "checkout", "-q", "FETCH_HEAD"],
         check=True,
         timeout=30,
     )
 
     if not result_path.is_dir():
-        raise FileNotFoundError(f"Expected directory {result_path} not found after sparse checkout")
+        raise FileNotFoundError(f"Expected directory {result_path} not found after checkout")
 
+    (repo_dir / _RESOLVED_REF_MARKER).write_text(version)
     logger.info("Platform manifests available at %s", result_path)
     return result_path
 
@@ -114,49 +153,136 @@ def cleanup_platform_clone() -> None:
 
 
 def _get_cached_ref(repo_dir: Path) -> str | None:
-    """Return the current HEAD ref of a cached clone, or None if unreadable."""
+    """Return the version string a cached clone was fetched for, or None if unknown."""
+    marker = repo_dir / _RESOLVED_REF_MARKER
     try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            cwd=str(repo_dir),
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=10,
-        )
-        return result.stdout.strip() or None
-    except (subprocess.SubprocessError, OSError):
+        return marker.read_text().strip() or None
+    except OSError:
         return None
 
 
-def _resolve_git_ref(repo_url: str, version: str) -> str:
-    """Check if ``version`` exists as a remote ref; fall back to ``main``."""
+def detect_mcp_gateway_extension_crd_spec(
+    chart_ref: str, version_flag: list[str] | None = None
+) -> dict[str, Any]:
+    """Inspect the MCPGatewayExtension CRD shipped by the mcp-gateway chart
+    that is being installed and return its group, storage apiVersion, and
+    supported spec fields.
+
+    Reads the CRD straight from the chart definition via ``helm show
+    crds`` (works for both an OCI chart ref + ``--version`` and a local
+    chart path), so the generated MCPGatewayExtension custom resource
+    always matches exactly the chart version this run is deploying,
+    independent of anything already present on the target cluster.
+
+    Returns a dict with keys ``api_group``, ``api_version``, and
+    ``has_private_host``.
+    """
     result = subprocess.run(
-        ["git", "ls-remote", "--exit-code", repo_url, f"refs/tags/{version}"],
+        ["helm", "show", "crds", chart_ref, *(version_flag or [])],
         capture_output=True,
         text=True,
-        check=False,
+        check=True,
         timeout=30,
     )
-    if result.returncode == 0:
-        return version
 
-    result = subprocess.run(
-        ["git", "ls-remote", "--exit-code", repo_url, f"refs/heads/{version}"],
-        capture_output=True,
-        text=True,
+    for doc in yaml.safe_load_all(result.stdout):
+        if not doc or doc.get("kind") != "CustomResourceDefinition":
+            continue
+        if "mcpgatewayextension" not in doc["metadata"]["name"]:
+            continue
+
+        spec = doc["spec"]
+        versions = spec["versions"]
+        storage_version = next((v for v in versions if v.get("storage")), versions[-1])
+        schema_props = (
+            storage_version.get("schema", {})
+            .get("openAPIV3Schema", {})
+            .get("properties", {})
+            .get("spec", {})
+            .get("properties", {})
+        )
+        return {
+            "api_group": spec["group"],
+            "api_version": storage_version["name"],
+            "has_private_host": "privateHost" in schema_props,
+        }
+
+    raise RuntimeError(f"No MCPGatewayExtension CRD found in chart {chart_ref}")
+
+
+def prune_stale_mcp_gateway_extension_crds(expected_group: str) -> list[str]:
+    """Remove any MCPGatewayExtension-family CRD (and its CR instances)
+    whose API group doesn't match ``expected_group``.
+
+    Different mcp-gateway chart versions have shipped this CRD under
+    different API groups (e.g. ``mcp.kagenti.com`` before ``mcp.kuadrant.io``).
+    Running this after determining the current chart's group ensures a
+    cluster previously used with a different chart version doesn't keep
+    stale CRDs/CRs around alongside the ones the current chart defines.
+
+    Returns the list of CRD names that were removed.
+    """
+    result = oc("get", "crd", "-o", "name", check=False, log_stdout=False)
+    stale = [
+        line.split("/", 1)[-1]
+        for line in result.stdout.splitlines()
+        if "mcpgatewayextension" in line and not line.endswith(f".{expected_group}")
+    ]
+
+    for crd_name in stale:
+        _remove_finalizers_for_crd(crd_name)
+        oc("delete", "crd", crd_name, "--ignore-not-found=true", "--timeout=60s", check=False)
+        if wait_for_crd_deletion(crd_name, timeout=60):
+            logger.info(
+                "Removed stale CRD %s (doesn't match current chart group %s)",
+                crd_name,
+                expected_group,
+            )
+        else:
+            oc(
+                "patch",
+                "crd",
+                crd_name,
+                "--type=merge",
+                "-p",
+                '{"metadata":{"finalizers":null}}',
+                check=False,
+            )
+            wait_for_crd_deletion(crd_name, timeout=30)
+
+    return stale
+
+
+def _remove_finalizers_for_crd(crd_name: str) -> None:
+    """Remove finalizers from all instances of a CRD so its deletion doesn't hang."""
+    resource_kind = crd_name.split(".", 1)[0]
+    result = oc(
+        "get",
+        resource_kind,
+        "--all-namespaces",
+        "-o",
+        'jsonpath={range .items[*]}{.metadata.namespace}/{.metadata.name}{"\\n"}{end}',
         check=False,
-        timeout=30,
     )
-    if result.returncode == 0:
-        return version
+    if result.returncode != 0 or not result.stdout.strip():
+        return
 
-    logger.warning(
-        "Git ref '%s' not found in %s — falling back to 'main'",
-        version,
-        repo_url,
-    )
-    return "main"
+    for line in result.stdout.strip().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        ns, _, name = line.partition("/")
+        patch_args = [
+            "patch",
+            resource_kind,
+            name or ns,
+            "--type=merge",
+            "-p",
+            '{"metadata":{"finalizers":null}}',
+        ]
+        if name:
+            patch_args += ["-n", ns]
+        oc(*patch_args, check=False)
 
 
 def find_step(steps: list[dict], name: str) -> dict | None:
@@ -284,3 +410,42 @@ def _force_remove_namespace_finalizers(namespace: str) -> None:
         logger.info("Removed finalizers from namespace %s", namespace)
     except Exception as exc:
         logger.warning("Failed to remove finalizers from %s: %s", namespace, exc)
+
+
+def patch_service_mesh_istio_version(
+    kustomize_path: Path,
+    version: str = _DEFAULT_ISTIO_VERSION,
+) -> list[str]:
+    """Rewrite ``spec.version`` in Istio / IstioCNI manifests under *kustomize_path*.
+
+    Upstream mcp-gateway pins an EOL Istio tag that current Sail / OSSM 3
+    rejects. Forge patches the cloned manifests before ``oc apply -k``.
+
+    Returns the list of files that were modified.
+    """
+    if not version:
+        return []
+
+    patched: list[str] = []
+    for path in sorted(kustomize_path.rglob("*.yaml")):
+        text = path.read_text(encoding="utf-8")
+        if "sailoperator.io" not in text and "kind: Istio" not in text:
+            continue
+        if "version:" not in text:
+            continue
+
+        new_text, n = _ISTIO_VERSION_RE.subn(rf"\g<1>{version}", text)
+        if n == 0 or new_text == text:
+            continue
+
+        path.write_text(new_text, encoding="utf-8")
+        patched.append(str(path))
+        logger.info("Patched Istio version -> %s in %s", version, path)
+
+    if not patched:
+        logger.warning(
+            "No Istio/IstioCNI version fields patched under %s (wanted %s)",
+            kustomize_path,
+            version,
+        )
+    return patched

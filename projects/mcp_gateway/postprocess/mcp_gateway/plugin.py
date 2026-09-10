@@ -20,11 +20,15 @@ logger = logging.getLogger(__name__)
 
 # Compare versions while matching on load shape / target / protocol.
 analysis_config = AnalysisConfig(
-    comparison_keys=["mcp_gateway_version"],
-    ignored_keys=[],
-    sorting_keys=["num_servers", "users", "target"],
-    max_relative_regression=0.10,
-    min_baseline_points=1,
+    comparison_labels=["mcp_gateway_version"],
+    ignored_labels=[],
+    sorting_labels=["num_servers", "users", "target"],
+    regression_config={
+        "SCALAR_RELATIVE_CHANGE": {
+            "max_relative_regression": 0.10,
+            "min_baseline_points": 1,
+        },
+    },
 )
 
 

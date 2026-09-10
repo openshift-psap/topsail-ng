@@ -15,11 +15,11 @@ nightly:
     experiment: "mcp-gw-cpt-ghcr"
     version_pattern: "-v(.+?)-\\d{8}-\\d{6}$"
     strip_prefix: "sha-"
-  cluster: "avis-cluster"
+  cluster: "agentic-cpt-8xa100"
   version_key: "infrastructure.mcp_gateway_version"
   pipeline: "forge-full"
   preset: "demo"
-  owner: "ashtakb"
+  owner: "ashtarkb"
 
 vaults:
   all: []

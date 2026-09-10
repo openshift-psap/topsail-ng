@@ -337,8 +337,13 @@ class TestMCPGatewayPlugin:
     def test_analysis_config_present(self):
         from projects.mcp_gateway.postprocess.mcp_gateway import plugin as plugin_mod
 
-        assert plugin_mod.analysis_config.comparison_keys == ["mcp_gateway_version"]
-        assert plugin_mod.analysis_config.max_relative_regression == 0.10
+        assert plugin_mod.analysis_config.comparison_labels == ["mcp_gateway_version"]
+        assert (
+            plugin_mod.analysis_config.regression_config["SCALAR_RELATIVE_CHANGE"][
+                "max_relative_regression"
+            ]
+            == 0.10
+        )
 
     def test_plugin_parse_and_kpis(self, tmp_path: Path):
         node = _make_test_node(tmp_path, "run-a", SAMPLE_STATS_CSV, TEST_LABELS)

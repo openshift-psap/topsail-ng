@@ -97,6 +97,7 @@ def delete_mcp_gateway_controller(args, ctx):
         "mcpgatewayextensions.mcp.kuadrant.io",
         "mcpserverregistrations.mcp.kuadrant.io",
         "mcpvirtualservers.mcp.kuadrant.io",
+        "mcpgatewayextensions.mcp.kagenti.com",
         "mcpserverregistrations.mcp.kagenti.com",
     ]
     deleted = []

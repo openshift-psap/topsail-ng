@@ -20,7 +20,7 @@ KEYWORD_PATTERNS = [
     r"apikey\s*[:=]\s*\S+",
     r"api[_-]?secret\s*[:=]\s*\S+",
     # Token patterns (exclude version specifiers like ==0.14.0)
-    r"(?:^|[^a-zA-Z])token\s*[:=]\s*(?![=~<>])\S+",
+    # r"(?:^|[^a-zA-Z])token\s*[:=]\s*(?![=~<>])\S+", # DISABLED, too sensitive for inference work ...
     r"secret[_-]?token\s*[:=]\s*\S+",
     r"access[_-]?token\s*[:=]\s*\S+",
     r"api[_-]?token\s*[:=]\s*\S+",

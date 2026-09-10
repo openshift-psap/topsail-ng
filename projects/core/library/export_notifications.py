@@ -615,11 +615,6 @@ def _get_postprocess_status_links(
 
             logger.info(f"DEBUG: Postprocess status - {step_name}: loaded status_data successfully")
 
-            # Add job shutdown status if available
-            if "job_shutdown" in status_data:
-                shutdown_status = status_data["job_shutdown"]
-                status_data["job_shutdown"] = shutdown_status
-
             # Import notification functions from caliper (inside function to avoid circular imports)
             from projects.caliper.orchestration.notification import (
                 format_postprocess_status_notification,

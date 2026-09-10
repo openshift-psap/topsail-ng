@@ -91,9 +91,7 @@ profiles:
         max_model_len: 40960
         prefix_caching_hash_algo: sha256_cbor
         block_size: 64
-        # The serving image expands VLLM_ADDITIONAL_ARGS through `eval`; literal
-        # single quotes keep the JSON intact for vLLM after that shell parse.
-        kv_events_config: "'{\"enable_kv_cache_events\": true, \"publisher\": \"zmq\", \"endpoint\": \"tcp://__INFERENCE_SERVICE_NAME__-epp-service:5557\", \"topic\": \"kv@$(POD_IP)@$(MODEL_NAME)\"}'"
+        kv_events_config: "'{\"enable_kv_cache_events\": true, \"publisher\": \"zmq\", \"endpoint\": \"tcp://*:5556\", \"topic\": \"kv@$(POD_IP)@$(MODEL_NAME)\"}'"
       env:
         - name: POD_IP
           valueFrom:
@@ -104,6 +102,17 @@ profiles:
           value: __MODEL_NAME__
         - name: PYTHONHASHSEED
           value: "42"
+
+  upstream-optimized-baseline:
+    scheduler_manifest: manifests/deployments/upstream-optimized-baseline.yaml
+
+  release-upstream-optimized-baseline:
+    scheduler_manifest: manifests/deployments/upstream-optimized-baseline.yaml
+    replicas: 4
+    tensor_parallelism: 2
+    vllm_extra:
+      args:
+        max_model_len: 40960
 
   release-distributed-default:
     scheduler: {}

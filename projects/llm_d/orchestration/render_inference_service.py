@@ -193,12 +193,13 @@ def render_inference_service_from_parts(
 
     # These sentinels are resolved here because VLLM_ADDITIONAL_ARGS is opaque
     # shell input and cannot use controller-time Go-template substitutions.
-    rendered_service_name = f"llm-d-{deployment_profile_name}" if deployment_profile_name else name
+    rendered_service_name = name
     deployment_profile = _replace_placeholders(
         deployment_profile,
         {
             "__INFERENCE_SERVICE_NAME__": rendered_service_name,
-            "__MODEL_NAME__": model_name.removeprefix("hf://"),
+            "__MODEL_NAME__": model_slug,
+            "__NAMESPACE__": namespace,
         },
     )
     manifest["metadata"]["annotations"].update(deployment_profile.get("annotations", {}))

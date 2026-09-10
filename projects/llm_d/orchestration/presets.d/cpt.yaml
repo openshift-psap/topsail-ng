@@ -36,6 +36,7 @@ cpt-release-testing-rhoai:
   - release-distributed-default
   - release-precise-prefix-cache
   - release-approximate-prefix-cache
+  - release-upstream-optimized-baseline
   runtime.smoke_request_key: default
   runtime.benchmark_key:
   - concurrent-1k-1k

@@ -64,6 +64,9 @@ from projects.core.library import env
 
 logger = logging.getLogger(__name__)
 
+# Postprocess status filename constant
+POSTPROCESS_STATUS_FILENAME = "postprocess_status.yaml"
+
 
 def _make_path_relative_to_base(file_path: str | Path, base_dir: Path) -> str:
     """Convert absolute path to relative path from base directory.
@@ -1525,7 +1528,7 @@ class CaliperPostprocessOrchestrator:
 
             output_dir = self.output_dir / "status_files"
             output_dir.mkdir(parents=True, exist_ok=True)
-            status_file = output_dir / "postprocess_status.yaml"
+            status_file = output_dir / POSTPROCESS_STATUS_FILENAME
 
             # Convert to typed status object
             status = PostprocessStatus.from_orchestration_result(result)

@@ -411,17 +411,6 @@ def run_orchestration_postprocess(
         test_outcome=test_outcome,
     )
 
-    status_path = output_dir / "postprocess_status.yaml"
-    try:
-        status_path.parent.mkdir(parents=True, exist_ok=True)
-        status_path.write_text(
-            yaml.dump(result, indent=2, default_flow_style=False, sort_keys=False),
-            encoding="utf-8",
-        )
-        logger.info("Wrote postprocess status YAML to %s", status_path)
-    except OSError as e:
-        logger.warning("Could not write %s: %s", status_path, e)
-
     # Generate HTML reports
     try:
         generate_caliper_reports_index(result, output_dir or env.ARTIFACT_DIR, "reports_index.html")

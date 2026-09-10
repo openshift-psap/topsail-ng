@@ -8,6 +8,7 @@ import yaml
 
 import projects.core.notifications.github.api as github_api
 import projects.core.notifications.slack.api as slack_api
+from projects.caliper.orchestration.postprocess import POSTPROCESS_STATUS_FILENAME
 from projects.core.library import ci as ci_lib
 
 logger = logging.getLogger(__name__)
@@ -345,8 +346,8 @@ def get_common_message(finish_reason: str, status: str, get_link, get_italics, g
     artifact_dir = pathlib.Path(os.environ.get("ARTIFACT_DIR", ""))
     caliper_status_path = None
 
-    # Search for postprocess_status.yaml in artifact directory and subdirectories
-    for status_file in artifact_dir.glob("**/postprocess_status.yaml"):
+    # Search for POSTPROCESS_STATUS_FILENAME in artifact directory and subdirectories
+    for status_file in artifact_dir.glob(f"**/{POSTPROCESS_STATUS_FILENAME}"):
         caliper_status_path = status_file
         break
 
@@ -376,9 +377,9 @@ def get_common_message(finish_reason: str, status: str, get_link, get_italics, g
 • Caliper postprocess completed but no reports generated.
 """
         except Exception as e:
-            logger.warning("Failed to parse postprocess_status.yaml: %s", e)
+            logger.warning("Failed to parse POSTPROCESS_STATUS_FILENAME: %s", e)
             message += """
-• Failed to parse postprocess_status.yaml ...
+• Failed to parse POSTPROCESS_STATUS_FILENAME ...
 """
 
     # Include fournos_launcher generated notification content

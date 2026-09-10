@@ -14,6 +14,7 @@ from typing import Any
 import yaml
 
 from projects.caliper.orchestration.censoring import censor_text
+from projects.caliper.orchestration.postprocess import POSTPROCESS_STATUS_FILENAME
 from projects.core.ci_entrypoint.prepare_ci import CI_METADATA_DIRNAME
 from projects.core.library import ci as ci_lib
 from projects.core.library import config, env
@@ -205,6 +206,9 @@ def _get_project_and_args(project: str) -> tuple[str, str]:
 
 def _extract_finish_reason_from_status(status: dict[str, Any]) -> str:
     """Extract finish reason from status."""
+    logger.info(f"DEBUG: Raw status object keys: {list(status.keys())}")
+    logger.info(f"DEBUG: Raw status object: {status}")
+
     success = status.get("success", False)
     censoring_occurred = status.get("censoring_occurred", False)
 
@@ -592,28 +596,17 @@ def _get_postprocess_status_links(
             continue
 
         try:
-            postprocess_status_file = step_dir / "postprocess_status.yaml"
+            # Search for postprocess status files recursively within this step directory
+            step_postprocess_files = list(step_dir.glob(f"**/{POSTPROCESS_STATUS_FILENAME}"))
             logger.info(
-                f"DEBUG: Postprocess status - checking {step_name}, file={postprocess_status_file}"
+                f"DEBUG: Postprocess status - {step_name}: found {len(step_postprocess_files)} files: {step_postprocess_files}"
             )
 
-            if not postprocess_status_file.exists():
+            if not step_postprocess_files:
                 logger.info(
-                    f"DEBUG: Postprocess status - {step_name}: postprocess_status.yaml not found"
+                    f"DEBUG: Postprocess status - {step_name}: no {POSTPROCESS_STATUS_FILENAME} files found"
                 )
                 continue
-
-            logger.info(
-                f"DEBUG: Postprocess status - {step_name}: postprocess_status.yaml exists, reading..."
-            )
-            with open(postprocess_status_file, encoding="utf-8") as f:
-                status_data = yaml.safe_load(f.read())
-
-            if not status_data:
-                logger.info(f"DEBUG: Postprocess status - {step_name}: status_data is empty")
-                continue
-
-            logger.info(f"DEBUG: Postprocess status - {step_name}: loaded status_data successfully")
 
             # Import notification functions from caliper (inside function to avoid circular imports)
             from projects.caliper.orchestration.notification import (
@@ -621,40 +614,65 @@ def _get_postprocess_status_links(
                 parse_postprocess_status,
             )
 
-            # Parse postprocess result
-            logger.info(f"DEBUG: Postprocess status - {step_name}: parsing status_data...")
-            result = parse_postprocess_status(status_data)
-            if not result:
+            # Process ALL postprocess status files found
+            for file_index, postprocess_status_file in enumerate(step_postprocess_files):
                 logger.info(
-                    f"DEBUG: Postprocess status - {step_name}: parse_postprocess_status returned None/empty"
+                    f"DEBUG: Postprocess status - {step_name}: processing file {file_index + 1}/{len(step_postprocess_files)}: {postprocess_status_file}"
                 )
-                continue
 
-            logger.info(f"DEBUG: Postprocess status - {step_name}: parsed result successfully")
+                with open(postprocess_status_file, encoding="utf-8") as f:
+                    status_data = yaml.safe_load(f.read())
 
-            # Create file link function for this step
-            def get_file_link(file_path: Path, step_subdir: str = step_name) -> str:
-                if mlflow_run_url:
-                    # Create MLflow artifact URL
-                    return _create_mlflow_file_url_for_step(
-                        mlflow_run_url, step_subdir, str(file_path)
+                if not status_data:
+                    logger.info(
+                        f"DEBUG: Postprocess status - {step_name}: file {file_index + 1} status_data is empty, skipping"
                     )
-                else:
-                    # Fallback: just return the file path as text
-                    logger.info(f"DEBUG: Fallback: just return the file path as text ({file_path})")
+                    continue
 
-                    return str(file_path)
-
-            # Generate notification text from the structured result
-            logger.info(f"DEBUG: Postprocess status - {step_name}: generating notification text...")
-            notification_text = format_postprocess_status_notification(result, get_file_link)
-            if notification_text:
                 logger.info(
-                    f"DEBUG: Postprocess status - {step_name}: notification text generated, adding to list"
+                    f"DEBUG: Postprocess status - {step_name}: file {file_index + 1} loaded status_data successfully"
                 )
-                step_log_links.append(notification_text)
-            else:
-                logger.info(f"DEBUG: Postprocess status - {step_name}: notification text is empty")
+
+                # Parse postprocess result
+                logger.info(
+                    f"DEBUG: Postprocess status - {step_name}: file {file_index + 1} parsing status_data..."
+                )
+                result = parse_postprocess_status(status_data)
+                if not result:
+                    logger.info(
+                        f"DEBUG: Postprocess status - {step_name}: file {file_index + 1} parse_postprocess_status returned None/empty"
+                    )
+                    continue
+
+                logger.info(
+                    f"DEBUG: Postprocess status - {step_name}: file {file_index + 1} parsed result successfully"
+                )
+
+                # Create file link function for this step
+                def get_file_link(file_path: Path, step_subdir: str = step_name) -> str:
+                    if mlflow_run_url:
+                        # Create MLflow artifact URL
+                        return _create_mlflow_file_url_for_step(
+                            mlflow_run_url, step_subdir, str(file_path)
+                        )
+                    else:
+                        # Fallback: just return the file path as text
+                        return str(file_path)
+
+                # Generate notification text from the structured result
+                logger.info(
+                    f"DEBUG: Postprocess status - {step_name}: file {file_index + 1} generating notification text..."
+                )
+                notification_text = format_postprocess_status_notification(result, get_file_link)
+                if notification_text:
+                    logger.info(
+                        f"DEBUG: Postprocess status - {step_name}: file {file_index + 1} notification text generated, adding to list"
+                    )
+                    step_log_links.append(notification_text)
+                else:
+                    logger.info(
+                        f"DEBUG: Postprocess status - {step_name}: file {file_index + 1} notification text is empty"
+                    )
 
         except Exception as e:
             logger.exception(f"Failed to process postprocess status for {step_name}: {e}")
@@ -831,15 +849,15 @@ def _extract_test_labels_info(artifact_dir: Path, mlflow_run_url: str | None = N
 
 
 def _extract_postprocess_status_info(artifact_dir: Path) -> list[str]:
-    """Extract post-processing status information from postprocess_status.yaml files.
+    """Extract post-processing status information from POSTPROCESS_STATUS_FILENAME files.
 
     Returns:
         List of formatted strings with postprocess step status (success only, no details)
     """
     postprocess_info_lines = []
 
-    # Search for postprocess_status.yaml files recursively
-    postprocess_files = list(artifact_dir.glob("**/postprocess_status.yaml"))
+    # Search for POSTPROCESS_STATUS_FILENAME files recursively
+    postprocess_files = list(artifact_dir.glob(f"**/{POSTPROCESS_STATUS_FILENAME}"))
 
     if not postprocess_files:
         return []
@@ -966,7 +984,7 @@ def _check_postprocess_warnings(step_dir: Path) -> StepStatus:
     """Check for warning status in postprocess status file."""
 
     status = StepStatus.SUCCESS  # No postprocess warning/error, assume no warnings
-    for status_file in step_dir.glob("**/postprocess_status.yaml"):
+    for status_file in step_dir.glob(f"**/{POSTPROCESS_STATUS_FILENAME}"):
         try:
             with open(status_file, encoding="utf-8") as f:
                 status_data = yaml.safe_load(f)

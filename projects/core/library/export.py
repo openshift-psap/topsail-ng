@@ -20,6 +20,7 @@ from projects.caliper.orchestration.export import (
     ExportFailedException,
     run_from_orchestration_config,
 )
+from projects.caliper.orchestration.postprocess import POSTPROCESS_STATUS_FILENAME
 from projects.core.library import ci as ci_lib
 from projects.core.library import config, env, run
 from projects.core.library.export_notifications import (
@@ -97,8 +98,8 @@ def _update_fjob_export_status(status: dict):
 def _process_caliper_postprocess_status(
     step_dir: Path, step_log_links: list[str], mlflow_run_url: str | None = None
 ) -> None:
-    """Search for and process postprocess_status.yaml files in step directory."""
-    status_files = list(step_dir.glob("**/postprocess_status.yaml"))
+    """Search for and process POSTPROCESS_STATUS_FILENAME files in step directory."""
+    status_files = list(step_dir.glob(f"**/{POSTPROCESS_STATUS_FILENAME}"))
 
     for status_file in status_files:
         try:

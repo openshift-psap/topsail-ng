@@ -231,17 +231,16 @@ def _build_enhanced_notification(
     if finish_reason == "failed":
         status_emoji = "❌"
 
-    base_status = f"**{status_emoji} Execution of `{fjob_project}` {fjob_args_str} {status_emoji}**"
-    notification_parts = [base_status]
+    base_status = f"{status_emoji} **Execution of `{fjob_project}` {fjob_args_str}** {status_emoji}"
+    notification_parts = [base_status, ""]
 
     # Add job abort message right below overall status if applicable
     shutdown_status = status.get("job_shutdown")
     if shutdown_status and shutdown_status.get("is_aborted"):
+        notification_parts.append("---")
         shutdown_value = shutdown_status.get("shutdown_value", "Stop")
         notification_parts.append(f"🛑 **JOB ABORTED** - `spec.shutdown={shutdown_value}`")
-
-    notification_parts.append("---")
-    notification_parts.append("")
+        notification_parts += ["", "---", ""]
 
     execution_engine_config = _get_execution_engine_config()
     if execution_engine_config:
@@ -715,7 +714,7 @@ def _extract_postprocess_status_info(artifact_dir: Path) -> list[str]:
             else:
                 steps_str = f" {final_status}"
 
-            postprocess_info_lines.append(f"{overall_emoji} **{dir_name}**: {overall_emoji}{steps_str}")
+            postprocess_info_lines.append(f"{overall_emoji} **{dir_name}**: {steps_str}")
 
         except Exception as e:
             postprocess_info_lines.append(f"**{postprocess_file.name}**: Error reading file - {e}")

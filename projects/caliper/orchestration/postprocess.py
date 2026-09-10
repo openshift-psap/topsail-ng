@@ -1523,8 +1523,9 @@ class CaliperPostprocessOrchestrator:
                 save_postprocess_status_yaml,
             )
 
-            self.output_dir.mkdir(parents=True, exist_ok=True)
-            status_file = self.output_dir / "postprocess_status.yaml"
+            output_dir = self.output_dir / "status_files"
+            output_dir.mkdir(parents=True, exist_ok=True)
+            status_file = output_dir / "postprocess_status.yaml"
 
             # Convert to typed status object
             status = PostprocessStatus.from_orchestration_result(result)

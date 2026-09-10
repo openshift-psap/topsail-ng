@@ -393,14 +393,36 @@ For details, see: $ARTIFACT_DIR/censoring_report.yaml"""
             ]
 
             if sanitized_files:
+                # Analyze what types of censoring occurred by examining reasons
+                sanitized_results = [r for r in censoring_results if r.sanitized]
+                reasons = [r.reason for r in sanitized_results]
+
+                # Categorize types of censoring that occurred
+                has_sanitized_replacements = any(
+                    "sensitive content detected" == reason for reason in reasons
+                )
+                has_placeholder_replacements = any(
+                    "sensitive content detected" != reason for reason in reasons
+                )
+
                 message_parts.append(
                     f"""
 {len(sanitized_files)} file(s) had sensitive content sanitized and included in export:
 
-{format_file_list(sanitized_files)}
-
-Sensitive content (passwords, API keys, tokens) was replaced with placeholder text."""
+{format_file_list(sanitized_files)}"""
                 )
+
+                # Generate appropriate description based on censoring types
+                if has_sanitized_replacements and has_placeholder_replacements:
+                    message_parts.append(
+                        "Some sensitive content was replaced with sanitized values, and other sensitive content (passwords, API keys, tokens) was replaced with placeholder text."
+                    )
+                elif has_sanitized_replacements and not has_placeholder_replacements:
+                    message_parts.append("Sensitive content was replaced with sanitized values.")
+                else:
+                    message_parts.append(
+                        "Sensitive content (passwords, API keys, tokens) was replaced with placeholder text."
+                    )
 
             if excluded_files:
                 message_parts.append(

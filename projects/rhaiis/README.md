@@ -526,6 +526,11 @@ python3 -m projects.rhaiis.orchestration.cli test \
 #   deepseek-r1, deepseek-v3, gpt-oss
 # Workload presets: profile1, profile2, profile3, profile4
 # Accelerator presets: nvidia, amd
+#
+# Spec decoding comparison (H200 Zeus): presets.d/spec-decoding.yaml
+#   deepseek-v4-baseline | deepseek-v4-mtp | deepseek-v4-dspark | deepseek-v4-dspark-dynamic
+python3 -m projects.rhaiis.orchestration.cli test \
+  --preset deepseek-v4-dspark
 ```
 
 Per-cluster presets (e.g. `presets.d/mehulvalidation.yaml`) set cluster-specific

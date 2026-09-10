@@ -1,0 +1,43 @@
+__multiple: true
+
+# DeepSeek-V4-Pro-0813 speculative decoding comparison on H200 Zeus (TP=8).
+# Runs all four workload profiles so they land on the staging dashboard.
+#
+# Adaptive verification (enable_adaptive_verification) is omitted: DeepSeek-V4
+# indexer/MLA backends only support the device-side trim + varlen full CUDA
+# graphs on SM100 (B300). H200 (SM90) rejects it at startup.
+
+deepseek-v4-spec-base:
+  rhaiis.accelerator: nvidia
+  rhaiis.cluster_tag: zeus
+  rhaiis.engines.vllm.args.gpu-memory-utilization: 0.9
+  tests.rhaiis.workload_keys:
+    - profile1
+    - profile2
+    - profile3
+    - profile4
+  rhaiis.profiler.enabled: true
+
+# 1. No speculative decoding
+deepseek-v4-baseline:
+  extends:
+    - deepseek-v4-spec-base
+  tests.rhaiis.model_key: deepseek-v4-pro-0813
+
+# 2. Native DeepSeek MTP
+deepseek-v4-mtp:
+  extends:
+    - deepseek-v4-spec-base
+  tests.rhaiis.model_key: deepseek-v4-pro-0813-mtp
+
+# 3. DSpark fixed-k (K=7)
+deepseek-v4-dspark:
+  extends:
+    - deepseek-v4-spec-base
+  tests.rhaiis.model_key: deepseek-v4-pro-0813-dspark
+
+# 4. DSpark + dynamic SD (K by concurrency bucket)
+deepseek-v4-dspark-dynamic:
+  extends:
+    - deepseek-v4-spec-base
+  tests.rhaiis.model_key: deepseek-v4-pro-0813-dspark-dynamic

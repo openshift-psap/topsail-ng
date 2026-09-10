@@ -280,6 +280,40 @@ deepseek-v4-pro:
   vllm_args:
     tensor-parallel-size: 8
 
+deepseek-v4-pro-0813: &deepseek-v4-pro-0813
+  name: DeepSeek-V4-Pro-0813
+  hf_model_id: deepseek-ai/DeepSeek-V4-Pro-0813
+  engine_args: &deepseek-v4-pro-0813-args
+    tensor-parallel-size: 8
+    enable-expert-parallel: true
+    kv-cache-dtype: fp8
+    max-model-len: 16384
+    max-num-seqs: 256
+    max-num-batched-tokens: 16384
+    gpu-memory-utilization: 0.9
+    compilation-config: '{"max_cudagraph_capture_size":4096}'
+
+deepseek-v4-pro-0813-mtp:
+  <<: *deepseek-v4-pro-0813
+  name: DeepSeek-V4-Pro-0813-MTP
+  engine_args:
+    <<: *deepseek-v4-pro-0813-args
+    speculative-config: '{"method":"mtp"}'
+
+deepseek-v4-pro-0813-dspark:
+  <<: *deepseek-v4-pro-0813
+  name: DeepSeek-V4-Pro-0813-DSpark
+  engine_args:
+    <<: *deepseek-v4-pro-0813-args
+    speculative-config: '{"method":"dspark","num_speculative_tokens":7,"draft_sample_method":"probabilistic"}'
+
+deepseek-v4-pro-0813-dspark-dynamic:
+  <<: *deepseek-v4-pro-0813
+  name: DeepSeek-V4-Pro-0813-DSpark-Dynamic
+  engine_args:
+    <<: *deepseek-v4-pro-0813-args
+    speculative-config: '{"method":"dspark","num_speculative_tokens":7,"draft_sample_method":"probabilistic","num_speculative_tokens_per_batch_size":[[1,64,7],[65,128,5],[129,512,0]]}'
+
 deepseek-r1-0528:
   name: DeepSeek-R1-0528
   hf_model_id: deepseek-ai/DeepSeek-R1-0528

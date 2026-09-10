@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+from jinja2 import Environment, FileSystemLoader
 
 from projects.caliper.engine.model import UnifiedResultRecord
 from projects.caliper.engine.parameter_matrix import (
@@ -24,15 +25,15 @@ logger = logging.getLogger(__name__)
 
 # Plot configuration constants
 PLOT_CONFIG = {
-    "width": 1700,
-    "height": 500,
+    "width": 1200,
+    "height": 650,
     "font": {"size": 12},
     "title_font_size": 16,
 }
 
 PLOT_CONFIG_LARGE = {
-    "width": 1700,
-    "height": 600,
+    "width": 1200,
+    "height": 650,
     "font": {"size": 12},
     "title_font_size": 16,
 }
@@ -67,7 +68,7 @@ def _read_html_content(html_path: str | Path) -> str:
         HTML content string
     """
     try:
-        logger.info(f"🔍 Reading HTML content from: {html_path}")
+        logger.debug(f"🔍 Reading HTML content from: {html_path}")
 
         # Check if file exists
         if not Path(html_path).exists():
@@ -77,25 +78,98 @@ def _read_html_content(html_path: str | Path) -> str:
         with open(html_path, encoding="utf-8") as html_file:
             content = html_file.read()
             content_size_kb = len(content.encode("utf-8")) / 1024
-            logger.info(f"   📄 Read {content_size_kb:.1f} KB from HTML file")
+            logger.debug(f"   📄 Read {content_size_kb:.1f} KB from HTML file")
 
             # Import re for regex operations
             import re
 
-            # Extract body content to avoid HTML document conflicts but keep all scripts
-            body_match = re.search(r"<body[^>]*>(.*?)</body>", content, re.DOTALL | re.IGNORECASE)
-            if body_match:
-                body_content = body_match.group(1)
-                body_size_kb = len(body_content.encode("utf-8")) / 1024
-                logger.info(f"   ✅ Extracted body content: {body_size_kb:.1f} KB")
-                return body_content
+            # Extract optimized content - remove Plotly script includes but keep plot div and Plotly.newPlot calls
+            optimized_content = _extract_optimized_plot_content(content)
+
+            if optimized_content:
+                optimized_size_kb = len(optimized_content.encode("utf-8")) / 1024
+                logger.debug(
+                    f"   ✅ Optimized content: {optimized_size_kb:.1f} KB (reduced from {content_size_kb:.1f} KB)"
+                )
+                return optimized_content
             else:
-                # If no body tags found, use full content
-                logger.warning("   ⚠️  No body tags found, using full content")
-                logger.info(f"   📄 Using full HTML content: {content_size_kb:.1f} KB")
-                return content
+                # Fallback to body extraction if optimization fails
+                body_match = re.search(
+                    r"<body[^>]*>(.*?)</body>", content, re.DOTALL | re.IGNORECASE
+                )
+                if body_match:
+                    body_content = body_match.group(1)
+                    body_size_kb = len(body_content.encode("utf-8")) / 1024
+                    logger.debug(
+                        f"   ⚠️  Optimization failed, using body content: {body_size_kb:.1f} KB"
+                    )
+                    return body_content
+                else:
+                    logger.debug("   ⚠️  No body tags found, using full content")
+                    return content
     except Exception as e:
         logger.warning(f"❌ Failed to read HTML content from {html_path}: {e}")
+        return ""
+
+
+def _extract_optimized_plot_content(html_content: str) -> str:
+    """Extract only the essential plot content without duplicate Plotly scripts.
+
+    Args:
+        html_content: Full HTML content from Plotly-generated file
+
+    Returns:
+        Optimized content with plot div and necessary scripts only
+    """
+    import re
+
+    try:
+        # Find the plot div (usually has id that starts with a UUID-like string)
+        plot_div_match = re.search(
+            r'<div[^>]*(?:class="[^"]*plotly-graph-div[^"]*"|id="[^"]*")[^>]*>.*?</div>',
+            html_content,
+            re.DOTALL | re.IGNORECASE,
+        )
+
+        if not plot_div_match:
+            logger.debug("   ⚠️  No plot div found, trying alternative extraction")
+            return ""
+
+        plot_div = plot_div_match.group(0)
+
+        # Extract any Plotly.newPlot or Plotly.plot calls (but not the script src tags)
+        plotly_calls = []
+
+        # Look for Plotly.newPlot calls
+        newplot_matches = re.finditer(
+            r"Plotly\.(?:newPlot|plot)\s*\([^)]+\);?", html_content, re.DOTALL | re.IGNORECASE
+        )
+
+        for match in newplot_matches:
+            plotly_calls.append(match.group(0))
+
+        # Also look for any window.PLOTLYENV or plot configuration
+        config_match = re.search(
+            r"window\.PLOTLYENV[^;]+;", html_content, re.DOTALL | re.IGNORECASE
+        )
+
+        # Combine the essential parts
+        essential_parts = [plot_div]
+
+        if plotly_calls:
+            script_content = "\n".join(plotly_calls)
+            essential_parts.append(f"<script>{script_content}</script>")
+
+        if config_match:
+            essential_parts.append(f"<script>{config_match.group(0)}</script>")
+
+        optimized_content = "\n".join(essential_parts)
+        logger.debug(f"   🎯 Extracted plot div + {len(plotly_calls)} Plotly calls")
+
+        return optimized_content
+
+    except Exception as e:
+        logger.debug(f"   ❌ Plot content optimization failed: {e}")
         return ""
 
 
@@ -124,18 +198,32 @@ def _create_plot_with_optional_png_spoiler(
             {html_content}
         </div>"""
 
-    # Add simple link to PNG version if it exists
+    # Add links to PNG and HTML versions if they exist
+    links = []
+
     if png_path is not None:
         full_png_path = Path(output_dir) / png_path
         if full_png_path.exists():
-            result += f"""
-        <div style="margin-top: 15px; text-align: center;">
-            <a href="{png_path}" target="_blank" style="color: #007acc; text-decoration: underline; font-size: 14px;">📸 Image version</a>
-        </div>"""
+            links.append(
+                f'<a href="{png_path}" target="_blank" style="color: #007acc; text-decoration: underline; font-size: 14px;">📸 Image version</a>'
+            )
         else:
             logger.debug(f"PNG file not found for {plot_name} at {full_png_path}")
     else:
         logger.debug(f"PNG generation was skipped for {plot_name} (HTML-only mode)")
+
+    if html_path is not None:
+        full_html_path = Path(output_dir) / html_path
+        if full_html_path.exists():
+            links.append(
+                f'<a href="{html_path}" target="_blank" style="color: #007acc; text-decoration: underline; font-size: 14px;">🌐 HTML version</a>'
+            )
+
+    if links:
+        result += f"""
+        <div style="margin-top: 15px; text-align: center;">
+            {" | ".join(links)}
+        </div>"""
 
     return result
 
@@ -159,20 +247,20 @@ def embed_plot_for_report(
     Returns:
         HTML string with embedded plot content
     """
-    logger.info(f"🔗 Embedding plot: {plot_name}")
-    logger.info(f"   📁 Output dir: {output_dir}")
-    logger.info(f"   🌐 HTML path: {html_path}")
-    logger.info(f"   🖼️  PNG path: {png_path}")
+    logger.debug(f"🔗 Embedding plot: {plot_name}")
+    logger.debug(f"   📁 Output dir: {output_dir}")
+    logger.debug(f"   🌐 HTML path: {html_path}")
+    logger.debug(f"   🖼️  PNG path: {png_path}")
 
     # Resolve full HTML path
     full_html_path = Path(output_dir) / html_path
-    logger.info(f"   📄 Full HTML path: {full_html_path}")
+    logger.debug(f"   📄 Full HTML path: {full_html_path}")
 
     # Read HTML content for direct embedding
     plot_html_content = _read_html_content(full_html_path)
 
     if not plot_html_content.strip():
-        logger.warning(f"   ⚠️  Empty HTML content for {plot_name}")
+        logger.debug(f"   ⚠️  Empty HTML content for {plot_name}")
         return f"<p>⚠️ Could not load interactive plot for {plot_name}</p>"
 
     # Create plot with optional PNG spoiler
@@ -181,7 +269,7 @@ def embed_plot_for_report(
     )
 
     result_size_kb = len(result.encode("utf-8")) / 1024
-    logger.info(f"   ✅ Successfully embedded {plot_name} ({result_size_kb:.1f} KB)")
+    logger.debug(f"   ✅ Successfully embedded {plot_name} ({result_size_kb:.1f} KB)")
     return result
 
 
@@ -619,10 +707,10 @@ def create_ttft_analysis_plot(df: pd.DataFrame, title_context: str = ""):
 
         ttft_data = df["ttft_median_ms"]
         non_zero_count = (ttft_data > 0).sum()
-        logger.info(
+        logger.debug(
             f"   TTFT data: {len(ttft_data)} total points, {non_zero_count} non-zero values"
         )
-        logger.info(f"   TTFT range: {ttft_data.min():.1f} - {ttft_data.max():.1f} ms")
+        logger.debug(f"   TTFT range: {ttft_data.min():.1f} - {ttft_data.max():.1f} ms")
 
         if ttft_data.max() == 0:
             logger.warning("⚠️  All TTFT values are zero - plot may appear empty")
@@ -671,7 +759,7 @@ def create_ttft_analysis_plot(df: pd.DataFrame, title_context: str = ""):
 def create_token_throughput_percentiles_plot(df: pd.DataFrame, title_context: str = ""):
     """Create token throughput percentiles plot."""
     try:
-        logger.info("📈 Creating token throughput percentiles distribution plot...")
+        logger.debug("📈 Creating token throughput percentiles distribution plot...")
         import plotly.express as px
         import plotly.graph_objects as go
 
@@ -716,7 +804,7 @@ def create_token_throughput_percentiles_plot(df: pd.DataFrame, title_context: st
 
         # Get unique configurations and colors - maintain custom sort order
         configurations = df["test_configuration"].drop_duplicates().tolist()
-        logger.info(
+        logger.debug(
             f"   Plotting {len(configurations)} configurations with percentile distributions..."
         )
         available_colors = px.colors.qualitative.Set1
@@ -733,7 +821,7 @@ def create_token_throughput_percentiles_plot(df: pd.DataFrame, title_context: st
             ("P75", "output_tokens_per_second_p75", {"width": 3, "dash": "dash"}, 0.9),
             ("P90", "output_tokens_per_second_p90", {"width": 2, "dash": "dashdot"}, 0.8),
         ]
-        logger.info(f"   Adding {len(percentiles)} percentile lines per configuration...")
+        logger.debug(f"   Adding {len(percentiles)} percentile lines per configuration...")
 
         for config in configurations:
             config_df = df[df["test_configuration"] == config].sort_values("intended_concurrency")
@@ -760,7 +848,7 @@ def create_token_throughput_percentiles_plot(df: pd.DataFrame, title_context: st
         )
         fig.update_yaxes(rangemode="tozero")
 
-        logger.info("✅ Token throughput percentiles plot created successfully")
+        logger.debug("✅ Token throughput percentiles plot created successfully")
         return fig
 
     except Exception as e:
@@ -815,7 +903,7 @@ def generate_token_throughput_vs_concurrency(
     report_number: int | None = None,
 ) -> str | None:
     """Generate token throughput vs concurrency analysis and save to file."""
-    logger.info("\n🚀 Generating token throughput vs concurrency analysis...")
+    logger.debug("\n🚀 Generating token throughput vs concurrency analysis...")
     df = create_dataframe_from_records(records)
     if df.empty:
         return None
@@ -874,6 +962,303 @@ def generate_token_throughput_percentiles_analysis(
     )
 
 
+def _generate_shared_performance_report(
+    records: list[UnifiedResultRecord],
+    output_dir: Path,
+    title_context: str = "",
+    report_number: int | None = None,
+    report_title: str = "GuideLLM Performance Analysis",
+    report_type: str = "comprehensive",  # "comprehensive" or "comparison"
+    grouping_config: dict[str, Any] | None = None,
+) -> str | None:
+    """
+    Shared function for generating performance reports with different grouping strategies.
+
+    Args:
+        records: List of unified result records
+        output_dir: Directory to save files
+        title_context: Additional context for titles
+        report_number: Optional report number for file naming
+        report_title: Title for the report
+        report_type: Either "comprehensive" (loadshape grouping) or "comparison" (comparison grouping)
+        grouping_config: Configuration for grouping strategy
+
+    Returns:
+        Path to generated report file
+    """
+    try:
+        # Create report identifier using core utilities
+        display_title = create_report_title_display(report_title, report_number)
+
+        logger.info(f"\n🚀 Starting {display_title} generation...")
+        logger.info("=" * 70)
+
+        # Generate all the plots as figures
+        plot_functions = [
+            ("Token Throughput vs Concurrency", create_token_throughput_vs_concurrency_plot),
+            ("TTFT Analysis", create_ttft_analysis_plot),
+            ("Token Throughput Percentiles", create_token_throughput_percentiles_plot),
+            ("Throughput Scaling", create_throughput_scaling_plot),
+            ("Latency vs Throughput", create_latency_vs_throughput_plot),
+        ]
+
+        # Group records based on report type
+        if report_type == "comprehensive":
+            # Group by loadshape
+            groups = {}
+            for record in records:
+                loadshape = record.distinguishing_labels.get("guidellm_loadshape", "default")
+                if loadshape not in groups:
+                    groups[loadshape] = []
+                groups[loadshape].append(record)
+            logger.info(
+                f"\n🔍 Found {len(groups)} loadshape(s): {', '.join(sorted(groups.keys()))}"
+            )
+        else:
+            # Comparison grouping logic (simplified from original)
+            comparison_keys = (
+                grouping_config.get("comparison_keys", {"version"})
+                if grouping_config
+                else {"version"}
+            )
+            groups = {}
+            for record in records:
+                # Create group key for comparison
+                group_labels = {}
+                for k, v in record.distinguishing_labels.items():
+                    if k not in comparison_keys:
+                        group_labels[k] = v
+                group_key = (
+                    tuple(sorted(group_labels.items())) if group_labels else ("unified_comparison",)
+                )
+                if group_key not in groups:
+                    groups[group_key] = []
+                groups[group_key].append(record)
+            logger.info(f"\n🔍 Found {len(groups)} comparison group(s)")
+
+        # Create dedicated directory for this report
+        if report_number is not None:
+            report_dir_name = f"report_{report_number:02d}_{report_title.lower().replace(' ', '_').replace(':', '').replace('-', '_')}"
+        else:
+            report_dir_name = "performance_analysis"
+
+        report_dir = output_dir / report_dir_name
+        report_dir.mkdir(exist_ok=True)
+        logger.info(f"\n📁 Created report directory: {report_dir_name}")
+
+        all_plots_data = []
+        group_mapping = {}  # Track what each group counter represents
+
+        # Process each group (sorted by key for consistent ordering)
+        for group_idx, (group_key, group_records) in enumerate(sorted(groups.items())):
+            if report_type == "comprehensive":
+                group_name = f"group_{group_idx:03d}"
+                group_desc = str(group_key)
+            else:
+                group_name = f"group_{group_idx:03d}"
+                group_desc = (
+                    ", ".join(f"{k}={v}" for k, v in group_key)
+                    if group_key != ("unified_comparison",)
+                    else "All Available Data"
+                )
+
+            # Store mapping for debugging/reference
+            group_mapping[group_name] = {
+                "group_key": group_key,
+                "group_desc": group_desc,
+                "record_count": len(group_records),
+            }
+
+            logger.info(f"\n📊 Processing group: {group_desc}")
+            logger.info(f"   Records: {len(group_records)}")
+
+            # Create DataFrame for this group
+            df = create_dataframe_from_records(group_records)
+            if df.empty:
+                logger.info(f"   ⚠️  No data available for group: {group_desc}")
+                continue
+
+            logger.info(f"   📈 Generating {len(plot_functions)} plots for {group_desc}...")
+
+            # Create subdirectory for this group
+            group_dir = report_dir / group_name
+            group_dir.mkdir(exist_ok=True)
+
+            # Generate plots for this group
+            group_plots = []
+            for i, (plot_name, plot_func) in enumerate(plot_functions, 1):
+                logger.info(
+                    f"   📊 [{i}/{len(plot_functions)}] Creating {plot_name} for {group_desc}..."
+                )
+                try:
+                    # Create context with group info
+                    if report_type == "comprehensive":
+                        # Extract model info for loadshape
+                        model_info = "Unknown"
+                        if group_records:
+                            first_record = group_records[0]
+                            model_info = (
+                                first_record.distinguishing_labels.get("model")
+                                or first_record.distinguishing_labels.get("model_name")
+                                or first_record.distinguishing_labels.get("llm_model")
+                                or first_record.run_identity.get("model")
+                                or "Unknown"
+                            )
+                        subtitle = f"Model: {model_info} | Load Shape: {group_desc}"
+                    else:
+                        # Comparison group subtitle
+                        subtitle = f"Comparison Group: {group_desc}"
+
+                    group_title_context = (
+                        f"{title_context}<br><sub>{subtitle}</sub>"
+                        if title_context
+                        else f"<br><sub>{subtitle}</sub>"
+                    )
+
+                    fig = plot_func(df, group_title_context)
+                    if fig:
+                        # Use counter-based filename to avoid length issues
+                        plot_name_safe = plot_name.lower().replace(" ", "_").replace("-", "_")
+                        filename = f"{i - 1:03d}__{plot_name_safe}"
+
+                        config = PLOT_CONFIG_LARGE if "Percentiles" in plot_name else PLOT_CONFIG
+                        width = config["width"]
+                        height = config["height"]
+                        png_path = save_figure(
+                            fig, group_dir, filename, as_image=True, width=width, height=height
+                        )
+                        html_path = save_figure(fig, group_dir, filename, as_image=False)
+
+                        if html_path:
+                            png_rel_path = (
+                                f"{report_dir_name}/{group_name}/{Path(png_path).name}"
+                                if png_path
+                                else None
+                            )
+                            html_rel_path = f"{report_dir_name}/{group_name}/{Path(html_path).name}"
+                            group_plots.append((plot_name, png_rel_path, html_rel_path))
+                            logger.debug(
+                                f"   ✅ {plot_name} saved - PNG: {png_rel_path}, HTML: {html_rel_path}"
+                            )
+                            if not png_path:
+                                logger.warning(
+                                    f"   ⚠️  PNG version of {plot_name} could not be generated (HTML available)"
+                                )
+                        else:
+                            logger.warning(f"   ⚠️  HTML version of {plot_name} could not be saved")
+                    else:
+                        logger.warning(
+                            f"   ⚠️  {plot_name} could not be created for {group_desc} (no figure returned)"
+                        )
+
+                except Exception as e:
+                    logger.info(f"   ❌ Failed to generate {plot_name} for {group_desc}: {e}")
+
+            # Store group plots data
+            if group_plots:
+                group_labels_dict = (
+                    dict(group_key)
+                    if group_key != ("unified_comparison",) and report_type == "comparison"
+                    else {}
+                )
+                all_plots_data.append((group_desc, group_plots, group_labels_dict))
+
+        if not all_plots_data:
+            logger.info("❌ No plots were successfully generated")
+            return None
+
+        logger.info(f"\n✅ Successfully generated plots for {len(all_plots_data)} group(s)!")
+
+        # Save group mapping for reference
+        mapping_file = report_dir / "group_mapping.txt"
+        with open(mapping_file, "w", encoding="utf-8") as f:
+            f.write("Group Mapping Reference\n")
+            f.write("=" * 50 + "\n\n")
+            for group_name, info in group_mapping.items():
+                f.write(f"{group_name}:\n")
+                f.write(f"  Description: {info['group_desc']}\n")
+                f.write(f"  Records: {info['record_count']}\n")
+                if info["group_key"] != ("unified_comparison",):
+                    f.write(
+                        f"  Group Key: {dict(info['group_key']) if isinstance(info['group_key'], tuple) else info['group_key']}\n"
+                    )
+                f.write("\n")
+
+            f.write("Plot Naming Convention:\n")
+            f.write("-" * 30 + "\n")
+            f.write("000__token_throughput_vs_concurrency.png/html\n")
+            f.write("001__ttft_analysis.png/html\n")
+            f.write("002__token_throughput_percentiles.png/html\n")
+            f.write("003__throughput_scaling.png/html\n")
+            f.write("004__latency_vs_throughput.png/html\n")
+
+        logger.info(f"📋 Group mapping saved to: {mapping_file.name}")
+
+        # Generate HTML report
+        html_content = _generate_html_report(
+            all_plots_data, display_title, title_context, report_type, output_dir
+        )
+
+        # Save the main HTML report
+        main_html_filename = create_report_filename(
+            report_title.lower().replace(" ", "_"), report_number, report_title, "html"
+        )
+        main_html_path = output_dir / main_html_filename
+
+        with open(main_html_path, "w", encoding="utf-8") as f:
+            f.write(html_content)
+
+        logger.info(f"✅ Report saved as: {main_html_filename}")
+        logger.info(f"📁 Individual plots organized in subdirectories under: {report_dir_name}/")
+        logger.info("=" * 70)
+        logger.info(f"🎉 {display_title} ready: {main_html_path.name}")
+
+        return str(main_html_path)
+
+    except Exception:
+        logger.exception(f"❌ Failed to generate {report_type} performance report")
+        raise
+
+
+def _generate_html_report(
+    all_plots_data: list[tuple[str, list[tuple[str, str, str]], dict]],
+    display_title: str,
+    title_context: str,
+    report_type: str,
+    output_dir: Path,
+) -> str:
+    """Generate HTML content for the performance report using Jinja2 templating."""
+
+    if report_type == "comprehensive":
+        page_description = (
+            "Generated performance analysis with separate visualizations for each loadshape"
+        )
+        nav_header = "Quick Navigation:"
+    else:
+        page_description = (
+            "Generated performance analysis with separate visualizations for each comparison group"
+        )
+        nav_header = "Quick Navigation:"
+
+    # Set up Jinja2 environment with file-based template loading
+    templates_dir = Path(__file__).parent / "templates"
+    env = Environment(loader=FileSystemLoader(templates_dir))
+    template = env.get_template("performance_report.html")
+
+    # Render template with context
+    html_content = template.render(
+        display_title=display_title,
+        page_description=page_description,
+        nav_header=nav_header,
+        all_plots_data=all_plots_data,
+        report_type=report_type,
+        output_dir=output_dir,
+        embed_plot_for_report=embed_plot_for_report,
+    )
+
+    return html_content
+
+
 def generate_deployment_profile_report(
     records: list[UnifiedResultRecord],
     output_dir: Path,
@@ -895,616 +1280,15 @@ def generate_deployment_profile_report(
         report_number: Optional report number for file naming (e.g., 0 for "Report 00:")
         report_title: Title for the report (used in filename and HTML title)
     """
-    try:
-        # Create report identifier using core utilities
-        display_title = create_report_title_display(report_title, report_number)
-
-        logger.info(f"\n🚀 Starting {display_title} generation...")
-        logger.info("=" * 70)
-
-        # Use version as the comparison key to distinguish results
-        comparison_keys = {"version"}
-
-        # First, analyze what keys are actually available in the data
-        all_keys = set()
-        comparison_key_values = {key: set() for key in comparison_keys}
-
-        for record in records:
-            # Use distinguishing labels directly for analysis
-            labels = record.distinguishing_labels
-
-            # Debug: Print version values found
-            if "version" in labels:
-                logger.debug(
-                    f"🐛 DEBUG: Found version='{labels['version']}' in record {record.test_base_path}"
-                )
-            else:
-                logger.debug(
-                    f"🐛 DEBUG: No 'version' key found in record {record.test_base_path}, keys: {list(labels.keys())}"
-                )
-
-            all_keys.update(labels.keys())
-            for key in comparison_keys:
-                if key in labels:
-                    comparison_key_values[key].add(labels[key])
-
-        logger.info("\n📊 Data analysis for comparison report:")
-        logger.info(f"   Total records: {len(records)}")
-        logger.info(f"   Available label keys: {sorted(all_keys)}")
-        logger.info("   Comparison key availability:")
-        for key in comparison_keys:
-            values = comparison_key_values[key]
-            logger.info(
-                f"      {key}: {len(values)} unique values: {sorted(values) if values else 'NOT FOUND'}"
-            )
-
-        # If version key has multiple values, use it; otherwise try deployment_profile fallback
-        active_comparison_keys = []
-        for key in comparison_keys:
-            if len(comparison_key_values[key]) > 1:
-                active_comparison_keys.append(key)
-
-        if not active_comparison_keys:
-            logger.info("⚠️  No version key with multiple values found, trying fallback keys...")
-            fallback_keys = ["deployment_profile", "guidellm_loadshape"]
-            fallback_values = {}
-
-            for record in records:
-                # Use distinguishing labels directly for fallback logic
-                labels = record.distinguishing_labels
-
-                for key in fallback_keys:
-                    if key not in fallback_values:
-                        fallback_values[key] = set()
-
-                    # Use distinguishing labels directly
-                    value = labels.get(key, "default")
-
-                    fallback_values[key].add(value)
-
-            logger.info("   Fallback key availability:")
-            for key in fallback_keys:
-                values = fallback_values[key]
-                logger.info(f"      {key}: {len(values)} unique values: {sorted(values)}")
-                if len(values) > 1:
-                    active_comparison_keys.append(key)
-
-        if not active_comparison_keys:
-            logger.info("⚠️  No suitable version values found for comparison")
-            logger.info("   📊 Generating single-dataset report...")
-
-            # Use a placeholder comparison key set for single-group analysis
-            active_comparison_keys = ["dataset"]
-            comparison_keys = {"dataset"}
-
-        logger.info(f"   Using comparison keys: {active_comparison_keys}")
-        comparison_keys = set(active_comparison_keys)
-
-        # Create one unified group for version comparison across all test configurations
-        core_labels = all_keys
-
-        comparison_groups = {}
-
-        for record in records:
-            # Create a group key from only core distinguishing labels (not version or config details)
-            group_labels = {}
-            for k, v in record.distinguishing_labels.items():
-                if k not in comparison_keys and k in core_labels:
-                    group_labels[k] = v
-
-            # Convert to a sortable tuple for grouping - if no core labels, use a single group
-            if group_labels:
-                group_key = tuple(sorted(group_labels.items()))
-            else:
-                group_key = ("unified_comparison",)
-
-            if group_key not in comparison_groups:
-                comparison_groups[group_key] = []
-            comparison_groups[group_key].append(record)
-
-        # Filter to only groups that have records with different comparison key values
-        valid_groups = {}
-        for group_key, group_records in comparison_groups.items():
-            # Extract comparison key values for this group
-            comparison_values = set()
-            for record in group_records:
-                # Use distinguishing labels directly for comparison key evaluation
-                comp_values = []
-                for key in comparison_keys:
-                    value = record.distinguishing_labels.get(key, "unknown")
-                    comp_values.append(value)
-                comparison_values.add(tuple(comp_values))
-
-            # Only include groups with multiple comparison key values
-            if len(comparison_values) > 1:
-                valid_groups[group_key] = group_records
-
-        if not valid_groups:
-            logger.info(
-                f"⚠️  No comparison groups found - all records have identical values for keys: {active_comparison_keys}"
-            )
-            logger.info("   📊 Generating single-group report with all data...")
-
-            # Create a single group with all records and include warning in the description
-            warning_message = f"No comparisons possible - all records have identical {', '.join(active_comparison_keys)} values"
-            single_group_key = ("all_data", warning_message)
-            valid_groups = {single_group_key: records}
-
-        logger.info(
-            f"\n🔍 Found {len(valid_groups)} comparison groups with varying {active_comparison_keys}:"
-        )
-        for i, (group_key, group_records) in enumerate(valid_groups.items(), 1):
-            # Handle special case for warning message
-            if len(group_key) == 2 and group_key[0] == "all_data":
-                group_desc = "All Available Data"
-            else:
-                group_desc = ", ".join(f"{k}={v}" for k, v in group_key)
-            comp_values = set()
-            for record in group_records:
-                # Use distinguishing labels directly for comparison key evaluation
-                comp_vals = []
-                for key in comparison_keys:
-                    value = record.distinguishing_labels.get(key, "unknown")
-                    comp_vals.append(value)
-                comp_values.add(tuple(comp_vals))
-            comp_desc = " vs ".join(f"{':'.join(cv)}" for cv in sorted(comp_values))
-            logger.info(f"   📋 Group {i}: [{group_desc}] comparing [{comp_desc}]")
-
-        # Generate all the plots as figures
-        plot_functions = [
-            ("Token Throughput vs Concurrency", create_token_throughput_vs_concurrency_plot),
-            ("TTFT Analysis", create_ttft_analysis_plot),
-            ("Token Throughput Percentiles", create_token_throughput_percentiles_plot),
-            ("Throughput Scaling", create_throughput_scaling_plot),
-            ("Latency vs Throughput", create_latency_vs_throughput_plot),
-        ]
-
-        # Create dedicated directory for this report
-        if report_number is not None:
-            report_dir_name = f"report_{report_number:02d}_comparison_analysis"
-        else:
-            report_dir_name = "comparison_analysis"
-
-        report_dir = output_dir / report_dir_name
-        report_dir.mkdir(exist_ok=True)
-        logger.info(f"\n📁 Created report directory: {report_dir_name}")
-
-        all_plots_data = []
-
-        # Process each comparison group separately
-        for group_key, group_records in valid_groups.items():
-            # Create group description for display and directory naming
-            # Handle special case for warning message
-            if len(group_key) == 2 and group_key[0] == "all_data":
-                group_desc = "All Available Data"
-                group_name = "all_data"
-                warning_msg = group_key[1]  # Extract warning message
-            else:
-                group_desc = ", ".join(f"{k}={v}" for k, v in group_key)
-                group_name = "__".join(f"{k}_{sanitize_for_path(v)}" for k, v in group_key)
-                warning_msg = None
-
-            logger.info(f"\n📊 Processing comparison group: {group_desc}")
-            logger.info(f"   Records: {len(group_records)}")
-
-            # Create DataFrame for this comparison group
-            df = create_dataframe_from_records(group_records)
-            if df.empty:
-                logger.info(f"   ⚠️  No data available for group: {group_desc}")
-                continue
-
-            logger.info(f"   📈 Generating {len(plot_functions)} plots for {group_desc}...")
-
-            # Create subdirectory for this comparison group
-            group_dir = report_dir / group_name
-            group_dir.mkdir(exist_ok=True)
-
-            # Extract metadata for this group
-            comp_values = set()
-            for r in group_records:
-                comp_tuple = tuple(
-                    r.distinguishing_labels.get(key, "unknown") for key in comparison_keys
-                )
-                comp_values.add(comp_tuple)
-            comp_desc = " vs ".join(f"{':'.join(cv)}" for cv in sorted(comp_values))
-
-            group_plots = []
-            for i, (plot_name, plot_func) in enumerate(plot_functions, 1):
-                logger.info(
-                    f"   📊 [{i}/{len(plot_functions)}] Creating {plot_name} for comparison group..."
-                )
-                try:
-                    # Create subtitle with group description and comparison info
-                    if warning_msg:
-                        # Show warning message instead of comparison info
-                        subtitle = f"{group_desc} - ⚠️ {warning_msg}"
-                    else:
-                        subtitle = f"Comparison Group: {group_desc} | Comparing: {comp_desc}"
-
-                    # Add original title context if provided
-                    if title_context:
-                        group_title_context = f"{title_context}<br><sub>{subtitle}</sub>"
-                    else:
-                        group_title_context = f"<br><sub>{subtitle}</sub>"
-
-                    fig = plot_func(df, group_title_context)
-                    if fig:
-                        # Save as both PNG and HTML in the group directory
-                        filename = f"{group_name}_{plot_name.lower().replace(' ', '_')}"
-
-                        # Save PNG image
-                        config = PLOT_CONFIG_LARGE if "Percentiles" in plot_name else PLOT_CONFIG
-                        width = config["width"]
-                        height = config["height"]
-                        png_path = save_figure(
-                            fig, group_dir, filename, as_image=True, width=width, height=height
-                        )
-
-                        # Save HTML version
-                        html_path = save_figure(fig, group_dir, filename, as_image=False)
-
-                        if html_path:
-                            # Store relative paths for linking (PNG optional)
-                            png_rel_path = (
-                                f"{report_dir_name}/{group_name}/{Path(png_path).name}"
-                                if png_path
-                                else None
-                            )
-                            group_plots.append(
-                                (
-                                    plot_name,
-                                    png_rel_path,  # PNG path (can be None)
-                                    f"{report_dir_name}/{group_name}/{Path(html_path).name}",  # HTML path
-                                )
-                            )
-                            logger.info(f"   ✅ {plot_name} saved for comparison group")
-                            if not png_path:
-                                logger.warning(
-                                    f"   ⚠️  PNG version of {plot_name} could not be generated (HTML available)"
-                                )
-                    else:
-                        logger.info(
-                            f"   ⚠️  {plot_name} could not be created for comparison group (no figure returned)"
-                        )
-
-                except Exception as e:
-                    logger.info(f"   ❌ Failed to generate {plot_name} for comparison group: {e}")
-
-            # Store group plots data if any plots were created
-            if group_plots:
-                # Include group_key for displaying identical labels
-                group_labels_dict = dict(group_key) if group_key != ("unified_comparison",) else {}
-                all_plots_data.append((group_desc, group_plots, group_labels_dict))
-
-        if not all_plots_data:
-            logger.info("❌ No plots were successfully generated")
-            return None
-
-        logger.info(
-            f"\n✅ Successfully generated plots for {len(all_plots_data)} comparison group(s)!"
-        )
-
-        # Create comprehensive HTML report with sections for each comparison group
-        logger.info("\n📝 Assembling comprehensive HTML report...")
-        logger.info(
-            "   🔗 Creating report with comparison group sections and interactive HTML links..."
-        )
-
-        html_content = f"""
-<!DOCTYPE html>
-<html lang='en'>
-<head>
-    <meta charset='UTF-8'>
-    <meta name='viewport' content='width=device-width, initial-scale=1.0'>
-    <title>{display_title}</title>
-    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
-    <style>
-        body {{ font-family: Arial, sans-serif; margin: 40px; }}
-        .header {{ text-align: center; margin-bottom: 30px; }}
-        .profile-section {{ margin: 40px 0; }}
-        .profile-title {{ color: #333; font-size: 24px; margin-bottom: 20px; border-bottom: 2px solid #007acc; padding-bottom: 10px; }}
-        .navigation {{ background-color: #f5f5f5; padding: 15px; border-radius: 4px; margin-bottom: 20px; }}
-        .navigation ul {{ list-style: none; padding: 0; margin: 0; }}
-        .navigation li {{ display: inline-block; margin-right: 20px; }}
-        .navigation a {{ color: #007acc; text-decoration: none; font-weight: bold; }}
-        .navigation a:hover {{ text-decoration: underline; }}
-
-        .tabs-container {{
-            margin: 20px 0;
-            border: 1px solid #ddd;
-            border-radius: 8px;
-            background-color: #f9f9f9;
-        }}
-
-        .tab-headers {{
-            display: flex;
-            background-color: #f1f1f1;
-            border-bottom: 1px solid #ddd;
-            border-top-left-radius: 8px;
-            border-top-right-radius: 8px;
-            flex-wrap: wrap;
-        }}
-
-        .tab-header {{
-            background-color: #e1e1e1;
-            color: #333;
-            padding: 15px 20px;
-            cursor: pointer;
-            border: none;
-            border-right: 1px solid #ddd;
-            font-family: Arial, sans-serif;
-            font-size: 16px;
-            font-weight: bold;
-            transition: background-color 0.3s;
-            flex: 1;
-            min-width: 150px;
-        }}
-
-        .tab-header:hover {{
-            background-color: #d1d1d1;
-        }}
-
-        .tab-header.active {{
-            background-color: #4CAF50;
-            color: white;
-        }}
-
-        .tab-header:first-child {{
-            border-top-left-radius: 8px;
-        }}
-
-        .tab-header:last-child {{
-            border-right: none;
-            border-top-right-radius: 8px;
-        }}
-
-        .tab-content {{
-            padding: 20px;
-            background-color: white;
-            display: none;
-            border-bottom-left-radius: 8px;
-            border-bottom-right-radius: 8px;
-            width: 100%;
-            min-height: 600px;
-        }}
-
-        .tab-content.active {{
-            display: block;
-            height: auto !important;
-            min-height: auto !important;
-            width: 100%;
-        }}
-
-        .tab-content > div {{
-            width: 100% !important;
-            height: auto !important;
-        }}
-
-        .tab-content .plotly-graph-div {{
-            width: 100% !important;
-            height: 600px !important;
-            min-width: 100% !important;
-            max-width: 100% !important;
-        }}
-
-        .tab-content .plotly-graph-div .svg-container {{
-            width: 100% !important;
-            height: 100% !important;
-        }}
-
-        .tab-content .js-plotly-plot {{
-            width: 100% !important;
-            height: 600px !important;
-        }}
-
-        details {{
-            height: auto !important;
-            min-height: auto !important;
-        }}
-
-        details[open] {{
-            height: auto !important;
-            min-height: auto !important;
-        }}
-
-        details > div {{
-            height: auto !important;
-            min-height: auto !important;
-        }}
-
-        .performance-insights {{
-            border-radius: 5px;
-            padding: 0.5em;
-            background-color: lightgray;
-            margin-top: 15px;
-        }}
-
-        .plot-container {{
-            text-align: center;
-        }}
-
-        .plot-container img {{
-            max-width: 100%;
-            height: auto;
-            cursor: pointer;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-        }}
-
-    </style>
-
-    <script>
-    function showTab(containerId, tabId, buttonElement) {{
-        // Get the specific container
-        var container = document.getElementById(containerId);
-
-        // Hide all tab contents within this container
-        var contents = container.querySelectorAll('.tab-content');
-        for (var i = 0; i < contents.length; i++) {{
-            contents[i].classList.remove('active');
-        }}
-
-        // Remove active class from all headers within this container
-        var headers = container.querySelectorAll('.tab-header');
-        for (var i = 0; i < headers.length; i++) {{
-            headers[i].classList.remove('active');
-        }}
-
-        // Show selected tab content and mark header as active
-        document.getElementById(tabId).classList.add('active');
-        buttonElement.classList.add('active');
-
-        // Resize any Plotly plots in the newly visible tab
-        setTimeout(function() {{
-            var activeTab = document.getElementById(tabId);
-            if (activeTab && typeof Plotly !== 'undefined') {{
-                var plotlyDivs = activeTab.querySelectorAll('.plotly-graph-div');
-                for (var i = 0; i < plotlyDivs.length; i++) {{
-                    var plotDiv = plotlyDivs[i];
-
-                    // Force the plot div to use full container width
-                    plotDiv.style.width = '100%';
-                    plotDiv.style.height = '600px';
-
-                    // Get the actual container width
-                    var containerWidth = plotDiv.parentNode.clientWidth;
-
-                    // Force relayout with explicit dimensions
-                    if (plotDiv._fullLayout) {{
-                        Plotly.relayout(plotDiv, {{
-                            width: containerWidth,
-                            height: 600,
-                            autosize: true
-                        }});
-                    }} else {{
-                        // Fallback to resize if relayout not available
-                        Plotly.Plots.resize(plotDiv);
-                    }}
-                }}
-            }}
-        }}, 150);
-    }}
-    </script>
-</head>
-<body>
-    <p><i>Click on the image to open the interactive full-size view of the plot.</i><br/>
-    <i>In the interactive view, click in the legend to hide a line, double click to see only this line.</i></p>
-
-    <div class="header">
-        <h1>{display_title}</h1>
-        <p>Generated performance analysis with separate visualizations for each comparison group</p>
-    </div>
-
-    <div class="navigation">
-        <h3>Quick Navigation:</h3>
-        <ul>"""
-
-        # Add navigation links for each comparison group
-        for group_desc, _, _ in all_plots_data:
-            group_id = group_desc.replace(" ", "_").replace("=", "_").replace(",", "_")
-            html_content += f'\n            <li><a href="#{group_id}">{group_desc}</a></li>'
-
-        html_content += """
-        </ul>
-    </div>
-"""
-        # Add sections for each comparison group
-        for group_desc, plots, group_labels in all_plots_data:
-            group_id = group_desc.replace(" ", "_").replace("=", "_").replace(",", "_")
-
-            # Handle special warning case
-            if group_desc == "All Available Data":
-                title_prefix = "Dataset:"
-                explanation = (
-                    "⚠️ No comparisons possible - all records have identical version values"
-                )
-            else:
-                title_prefix = "Comparison Group:"
-                explanation = f"Comparing different values of {active_comparison_keys} across identical test conditions"
-
-            # Generate display text for all identical labels
-            if group_labels:
-                labels_html = (
-                    "<ul style='margin: 5px 0; padding-left: 20px;'>"
-                    + "".join(
-                        f"<li><strong>{k}</strong>: {v}</li>"
-                        for k, v in sorted(group_labels.items())
-                    )
-                    + "</ul>"
-                )
-            else:
-                labels_html = "<p>All data (no grouping constraints)</p>"
-
-            html_content += f"""
-    <div class="profile-section" id="{group_id}">
-        <h2 class="profile-title">{title_prefix} {group_desc}</h2>
-        <p style="color: #666; font-size: 16px; margin: -10px 0 20px 0; font-style: italic;">
-            {explanation}
-        </p>
-
-        <div style="background-color: #f8f9fa; padding: 12px; margin: 10px 0 20px 0; border-left: 4px solid #007acc; font-size: 14px; color: #495057;">
-            <strong>Identical labels:</strong>
-            {labels_html}
-        </div>
-
-        """
-
-            # Embed all plots for this comparison group
-            if plots:
-                # Define plot descriptions
-                descriptions = {
-                    "Token Throughput vs Concurrency": "Token generation throughput scaling analysis across different concurrency levels.",
-                    "TTFT Analysis": "Time To First Token analysis - measuring responsiveness and initial latency.",
-                    "Token Throughput Percentiles": "Complete token throughput percentile distribution analysis.",
-                    "Throughput Scaling": "Throughput scaling behavior and efficiency analysis.",
-                    "Latency vs Throughput": "Trade-off analysis between latency and throughput performance.",
-                }
-
-                for plot_name, png_path, html_path in plots:
-                    description = descriptions.get(plot_name, f"{plot_name} performance analysis.")
-                    # Use centralized embedding function
-                    plot_content = embed_plot_for_report(png_path, html_path, plot_name, output_dir)
-                    html_content += f"""
-        <div style='padding:20px; margin-bottom:30px; height: auto; min-height: auto;'>
-            <h4>📊 {plot_name}</h4>
-            <p>{description}</p>
-            {plot_content}
-        </div>"""
-
-                html_content += "</div>"
-            else:
-                html_content += """
-        <div style='padding:20px;'>
-            <p>⚠️ No plots available for this group.</p>
-        </div>
-    </div>"""
-
-        # Close the HTML after all groups are processed
-        html_content += """
-</body>
-</html>"""
-
-        # Save the main HTML report
-        main_html_filename = create_report_filename(
-            "comparison_analysis", report_number, report_title, "html"
-        )
-        main_html_path = output_dir / main_html_filename
-
-        with open(main_html_path, "w", encoding="utf-8") as f:
-            f.write(html_content)
-
-        logger.info(f"✅ Comparison analysis report saved as: {main_html_filename}")
-        logger.info(f"📁 Individual plots organized in subdirectories under: {report_dir_name}/")
-
-        logger.info("=" * 70)
-        logger.info(f"🎉 {display_title} ready: {main_html_path.name}")
-
-        return str(main_html_path)
-
-    except Exception:
-        logger.exception("❌ Failed to generate deployment profile report")
-        # Re-raise for debugging - this error should not be silently ignored
-        raise
+    return _generate_shared_performance_report(
+        records=records,
+        output_dir=output_dir,
+        title_context=title_context,
+        report_number=report_number,
+        report_title=report_title,
+        report_type="comparison",
+        grouping_config={"comparison_keys": {"version"}},
+    )
 
 
 def generate_comprehensive_performance_report(
@@ -1524,475 +1308,14 @@ def generate_comprehensive_performance_report(
         report_number: Optional report number for file naming (e.g., 0 for "Report 00:")
         report_title: Title for the report (used in filename and HTML title)
     """
-    try:
-        # Create report identifier using core utilities
-        display_title = create_report_title_display(report_title, report_number)
-
-        logger.info(f"\n🚀 Starting {display_title} generation...")
-        logger.info("=" * 70)
-
-        # Group records by guidellm_loadshape
-        loadshape_groups = {}
-        for record in records:
-            loadshape = record.distinguishing_labels.get("guidellm_loadshape", "default")
-            if loadshape not in loadshape_groups:
-                loadshape_groups[loadshape] = []
-            loadshape_groups[loadshape].append(record)
-
-        if not loadshape_groups:
-            logger.info("❌ No data available for analysis")
-            return None
-
-        logger.info(
-            f"\n🔍 Found {len(loadshape_groups)} loadshape(s): {', '.join(loadshape_groups.keys())}"
-        )
-
-        # Generate all the plots as figures
-        plot_functions = [
-            ("Token Throughput vs Concurrency", create_token_throughput_vs_concurrency_plot),
-            ("TTFT Analysis", create_ttft_analysis_plot),
-            ("Token Throughput Percentiles", create_token_throughput_percentiles_plot),
-            ("Throughput Scaling", create_throughput_scaling_plot),
-            ("Latency vs Throughput", create_latency_vs_throughput_plot),
-        ]
-
-        # Create dedicated directory for this report
-        if report_number is not None:
-            report_dir_name = f"report_{report_number:02d}_{report_title.lower().replace(' ', '_').replace(':', '').replace('-', '_')}"
-        else:
-            report_dir_name = "performance_analysis"
-
-        report_dir = output_dir / report_dir_name
-        report_dir.mkdir(exist_ok=True)
-        logger.info(f"\n📁 Created report directory: {report_dir_name}")
-
-        all_plots_data = []
-
-        # Process each loadshape separately
-        for loadshape, loadshape_records in loadshape_groups.items():
-            logger.info(f"\n📊 Processing loadshape: {loadshape}")
-            logger.info(f"   Records: {len(loadshape_records)}")
-
-            # Create DataFrame for this loadshape
-            df = create_dataframe_from_records(loadshape_records)
-            if df.empty:
-                logger.info(f"   ⚠️  No data available for loadshape: {loadshape}")
-                continue
-
-            logger.info(f"   📈 Generating {len(plot_functions)} plots for {loadshape}...")
-
-            # Create subdirectory for this loadshape
-            loadshape_dir = report_dir / sanitize_for_path(loadshape)
-            loadshape_dir.mkdir(exist_ok=True)
-
-            # Extract model information for this loadshape
-            model_info = "Unknown"
-            if loadshape_records:
-                # Try to get model information from distinguishing labels
-                first_record = loadshape_records[0]
-                model_info = (
-                    first_record.distinguishing_labels.get("model")
-                    or first_record.distinguishing_labels.get("model_name")
-                    or first_record.distinguishing_labels.get("llm_model")
-                    or first_record.run_identity.get("model")
-                    or "Unknown"
-                )
-
-            loadshape_plots = []
-            for i, (plot_name, plot_func) in enumerate(plot_functions, 1):
-                logger.info(
-                    f"   📊 [{i}/{len(plot_functions)}] Creating {plot_name} for {loadshape}..."
-                )
-                try:
-                    # Create subtitle with model and loadshape info
-                    subtitle = f"Model: {model_info} | Load Shape: {loadshape}"
-
-                    # Add original title context if provided
-                    if title_context:
-                        loadshape_title_context = f"{title_context}<br><sub>{subtitle}</sub>"
-                    else:
-                        loadshape_title_context = f"<br><sub>{subtitle}</sub>"
-
-                    fig = plot_func(df, loadshape_title_context)
-                    if fig:
-                        # Save as both PNG and HTML in the loadshape directory
-                        filename = f"{loadshape}_{plot_name.lower().replace(' ', '_')}"
-
-                        # Save PNG image
-                        config = PLOT_CONFIG_LARGE if "Percentiles" in plot_name else PLOT_CONFIG
-                        width = config["width"]
-                        height = config["height"]
-                        png_path = save_figure(
-                            fig, loadshape_dir, filename, as_image=True, width=width, height=height
-                        )
-
-                        # Save HTML version
-                        html_path = save_figure(fig, loadshape_dir, filename, as_image=False)
-
-                        if html_path:
-                            # Store relative paths for linking (PNG optional)
-                            png_rel_path = (
-                                f"{report_dir_name}/{loadshape}/{Path(png_path).name}"
-                                if png_path
-                                else None
-                            )
-                            html_rel_path = f"{report_dir_name}/{loadshape}/{Path(html_path).name}"
-                            loadshape_plots.append(
-                                (
-                                    plot_name,
-                                    png_rel_path,  # PNG path (can be None)
-                                    html_rel_path,  # HTML path
-                                )
-                            )
-                            logger.info(
-                                f"   ✅ {plot_name} saved - PNG: {png_rel_path}, HTML: {html_rel_path}"
-                            )
-                            if not png_path:
-                                logger.warning(
-                                    f"   ⚠️  PNG version of {plot_name} could not be generated (HTML available)"
-                                )
-                        else:
-                            logger.warning(f"   ⚠️  HTML version of {plot_name} could not be saved")
-                    else:
-                        logger.warning(
-                            f"   ⚠️  {plot_name} could not be created for {loadshape} (no figure returned)"
-                        )
-
-                except Exception as e:
-                    logger.info(f"   ❌ Failed to generate {plot_name} for {loadshape}: {e}")
-
-            # Store loadshape plots data
-            if loadshape_plots:
-                all_plots_data.append((loadshape, loadshape_plots))
-
-        if not all_plots_data:
-            logger.info("❌ No plots were successfully generated")
-            return None
-
-        logger.info(f"\n✅ Successfully generated plots for {len(all_plots_data)} loadshape(s)!")
-
-        # Create comprehensive HTML report with sections for each loadshape
-        logger.info("\n📝 Assembling comprehensive HTML report...")
-        logger.info("   🔗 Creating report with loadshape sections and interactive HTML links...")
-
-        html_content = f"""
-<!DOCTYPE html>
-<html lang='en'>
-<head>
-    <meta charset='UTF-8'>
-    <meta name='viewport' content='width=device-width, initial-scale=1.0'>
-    <title>{display_title}</title>
-    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
-    <style>
-        body {{font-family: Arial, sans-serif; margin: 40px; }}
-        .header {{text-align: center; margin-bottom: 30px; }}
-        .loadshape-section {{margin: 40px 0; }}
-        .loadshape-title {{color: #333; font-size: 24px; margin-bottom: 20px; border-bottom: 2px solid #007acc; padding-bottom: 10px; }}
-        .navigation {{background-color: #f5f5f5; padding: 15px; border-radius: 4px; margin-bottom: 20px; }}
-        .navigation ul {{list-style: none; padding: 0; margin: 0; }}
-        .navigation li {{display: inline-block; margin-right: 20px; }}
-        .navigation a {{color: #007acc; text-decoration: none; font-weight: bold; }}
-        .navigation a:hover {{text-decoration: underline; }}
-
-        .tabs-container {{
-            margin: 20px 0;
-            border: 1px solid #ddd;
-            border-radius: 8px;
-            background-color: #f9f9f9;
-        }}
-
-        .tab-headers {{
-            display: flex;
-            background-color: #f1f1f1;
-            border-bottom: 1px solid #ddd;
-            border-top-left-radius: 8px;
-            border-top-right-radius: 8px;
-            flex-wrap: wrap;
-        }}
-
-        .tab-header {{
-            background-color: #e1e1e1;
-            color: #333;
-            padding: 15px 20px;
-            cursor: pointer;
-            border: none;
-            border-right: 1px solid #ddd;
-            font-family: Arial, sans-serif;
-            font-size: 16px;
-            font-weight: bold;
-            transition: background-color 0.3s;
-            flex: 1;
-            min-width: 150px;
-        }}
-
-        .tab-header:hover {{
-            background-color: #d1d1d1;
-        }}
-
-        .tab-header.active {{
-            background-color: #4CAF50;
-            color: white;
-        }}
-
-        .tab-header:first-child {{
-            border-top-left-radius: 8px;
-        }}
-
-        .tab-header:last-child {{
-            border-right: none;
-            border-top-right-radius: 8px;
-        }}
-
-        .tab-content {{
-            padding: 20px;
-            background-color: white;
-            display: none;
-            border-bottom-left-radius: 8px;
-            border-bottom-right-radius: 8px;
-            width: 100%;
-            min-height: 600px;
-        }}
-
-        .tab-content.active {{
-            display: block;
-            height: auto !important;
-            min-height: auto !important;
-            width: 100%;
-        }}
-
-        .tab-content > div {{
-            width: 100% !important;
-            height: auto !important;
-        }}
-
-        .tab-content .plotly-graph-div {{
-            width: 100% !important;
-            height: 600px !important;
-            min-width: 100% !important;
-            max-width: 100% !important;
-        }}
-
-        .tab-content .plotly-graph-div .svg-container {{
-            width: 100% !important;
-            height: 100% !important;
-        }}
-
-        .tab-content .js-plotly-plot {{
-            width: 100% !important;
-            height: 600px !important;
-        }}
-
-        details {{
-            height: auto !important;
-            min-height: auto !important;
-        }}
-
-        details[open] {{
-            height: auto !important;
-            min-height: auto !important;
-        }}
-
-        details > div {{
-            height: auto !important;
-            min-height: auto !important;
-        }}
-
-        .performance-insights {{
-            border-radius: 5px;
-            padding: 0.5em;
-            background-color: lightgray;
-            margin-top: 15px;
-        }}
-
-        .plot-container {{
-            text-align: center;
-        }}
-
-        .plot-container img {{
-            max-width: 100%;
-            height: auto;
-            cursor: pointer;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-        }}
-
-    </style>
-
-    <script>
-    function showTab(containerId, tabId, buttonElement) {{
-        // Get the specific container
-        var container = document.getElementById(containerId);
-
-        // Hide all tab contents within this container
-        var contents = container.querySelectorAll('.tab-content');
-        for (var i = 0; i < contents.length; i++) {{
-            contents[i].classList.remove('active');
-        }}
-
-        // Remove active class from all headers within this container
-        var headers = container.querySelectorAll('.tab-header');
-        for (var i = 0; i < headers.length; i++) {{
-            headers[i].classList.remove('active');
-        }}
-
-        // Show selected tab content and mark header as active
-        document.getElementById(tabId).classList.add('active');
-        buttonElement.classList.add('active');
-
-        // Resize any Plotly plots in the newly visible tab
-        setTimeout(function() {{
-            var activeTab = document.getElementById(tabId);
-            if (activeTab && typeof Plotly !== 'undefined') {{
-                var plotlyDivs = activeTab.querySelectorAll('.plotly-graph-div');
-                for (var i = 0; i < plotlyDivs.length; i++) {{
-                    var plotDiv = plotlyDivs[i];
-
-                    // Force the plot div to use full container width
-                    plotDiv.style.width = '100%';
-                    plotDiv.style.height = '600px';
-
-                    // Get the actual container width
-                    var containerWidth = plotDiv.parentNode.clientWidth;
-
-                    // Force relayout with explicit dimensions
-                    if (plotDiv._fullLayout) {{
-                        Plotly.relayout(plotDiv, {{
-                            width: containerWidth,
-                            height: 600,
-                            autosize: true
-                        }});
-                    }} else {{
-                        // Fallback to resize if relayout not available
-                        Plotly.Plots.resize(plotDiv);
-                    }}
-                }}
-            }}
-        }}, 150);
-    }}
-    </script>
-</head>
-<body>
-    <p><i>Click on the image to open the interactive full-size view of the plot.</i><br/>
-    <i>In the interactive view, click in the legend to hide a line, double click to see only this line.</i></p>
-
-    <div class="header">
-        <h1>{display_title}</h1>
-        <p>Generated performance analysis with separate visualizations for each loadshape</p>
-    </div>
-
-    <div class="navigation">
-        <h3>Quick Navigation:</h3>
-        <ul>"""
-
-        # Add navigation links for each loadshape
-        for loadshape, _ in all_plots_data:
-            html_content += f'\n            <li><a href="#{loadshape}">{loadshape}</a></li>'
-
-        html_content += """
-        </ul>
-    </div>
-"""
-
-        # Add sections for each loadshape with tabbed interface
-        container_id = 0
-        for loadshape, plots in all_plots_data:
-            # Extract model information for this loadshape
-            loadshape_records = loadshape_groups[loadshape]
-            model_info = "Unknown"
-            if loadshape_records:
-                # Try to get model information from distinguishing labels
-                first_record = loadshape_records[0]
-                model_info = (
-                    first_record.distinguishing_labels.get("model")
-                    or first_record.distinguishing_labels.get("model_name")
-                    or first_record.distinguishing_labels.get("llm_model")
-                    or first_record.run_identity.get("model")
-                    or "Unknown"
-                )
-
-            html_content += f"""
-    <div class="loadshape-section" id="{loadshape}">
-        <h2 class="loadshape-title">Loadshape: {loadshape}</h2>
-        <p style="color: #666; font-size: 16px; margin: -10px 0 20px 0; font-style: italic;">
-            Model: {model_info} | Load Shape: {loadshape}
-        </p>
-
-        <div id='tabs-container-{container_id}' class='tabs-container'>
-            <div class='tab-headers'>"""
-
-            # Define tab mapping with icons
-            tab_mapping = {
-                "Token Throughput vs Concurrency": "🚀 Throughput",
-                "TTFT Analysis": "⏱️ TTFT",
-                "Token Throughput Percentiles": "📊 Throughput Percentiles",
-                "Throughput Scaling": "📈 Scaling",
-                "Latency vs Throughput": "⚖️ Latency Trade-off",
-            }
-
-            # Create tab headers
-            for tab_idx, (plot_name, _png_path, _html_path) in enumerate(plots):
-                tab_title = tab_mapping.get(plot_name, plot_name)
-                active_class = " active" if tab_idx == 0 else ""
-                html_content += f"""
-                <button class='tab-header{active_class}' onclick="showTab('tabs-container-{container_id}', 'tab-{container_id}-{tab_idx}', this)">{tab_title}</button>"""
-
-            html_content += """
-            </div>"""
-
-            # Create tab contents
-            descriptions = {
-                "Token Throughput vs Concurrency": "Token generation throughput scaling analysis across different concurrency levels.",
-                "TTFT Analysis": "Time To First Token analysis - measuring responsiveness and initial latency.",
-                "Token Throughput Percentiles": "Complete token throughput percentile distribution analysis.",
-                "Throughput Scaling": "Throughput scaling behavior and efficiency analysis.",
-                "Latency vs Throughput": "Trade-off analysis between latency and throughput performance.",
-            }
-
-            for tab_idx, (plot_name, png_path, html_path) in enumerate(plots):
-                active_class = " active" if tab_idx == 0 else ""
-                description = descriptions.get(plot_name, f"{plot_name} performance analysis.")
-                # Use centralized embedding function
-                plot_content = embed_plot_for_report(png_path, html_path, plot_name, output_dir)
-
-                html_content += f"""
-            <div id='tab-{container_id}-{tab_idx}' class='tab-content{active_class}' style='height: auto; min-height: auto;'>
-                <div style='padding:20px; height: auto; min-height: auto;'>
-                    <h4>{plot_name}</h4>
-                    <p>{description}</p>
-                    {plot_content}
-                </div>
-            </div>"""
-
-            html_content += """
-        </div>
-    </div>"""
-            container_id += 1
-
-        html_content += """
-</body>
-</html>"""
-
-        # Save the main HTML report
-        main_html_filename = create_report_filename(
-            report_title.lower().replace(" ", "_"), report_number, report_title, "html"
-        )
-        main_html_path = output_dir / main_html_filename
-
-        with open(main_html_path, "w", encoding="utf-8") as f:
-            f.write(html_content)
-
-        logger.info(f"✅ Comprehensive report saved as: {main_html_filename}")
-        logger.info(f"📁 Individual plots organized in subdirectories under: {report_dir_name}/")
-
-        logger.info("=" * 70)
-        logger.info(f"🎉 {display_title} ready: {main_html_path.name}")
-
-        return str(main_html_path)
-
-    except Exception:
-        logger.exception("❌ Failed to generate comprehensive performance report")
-        # Re-raise for debugging - this error should not be silently ignored
-        raise
+    return _generate_shared_performance_report(
+        records=records,
+        output_dir=output_dir,
+        title_context=title_context,
+        report_number=report_number,
+        report_title=report_title,
+        report_type="comprehensive",
+    )
 
 
 def _generate_performance_summary(df: pd.DataFrame) -> dict[str, Any]:

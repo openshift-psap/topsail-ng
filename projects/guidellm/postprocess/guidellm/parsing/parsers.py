@@ -153,7 +153,7 @@ class GuideLLMParser:
             file_path: Path to llminferenceservice.yaml file
 
         Returns:
-            Dictionary with extracted fields (product_version, deployment_profile, model_name)
+            Dictionary with extracted fields (product_version, deployment_profile)
         """
         result = {}
         try:
@@ -192,12 +192,6 @@ class GuideLLMParser:
                 logger.debug(
                     f"Extracted deployment_profile '{deployment_profile}' from {file_path}"
                 )
-
-            # Extract model name from spec
-            model_name = extract_field_by_jsonpath(yaml_data, "spec.model.name")
-            if model_name:
-                result["model_name"] = model_name
-                logger.debug(f"Extracted model_name '{model_name}' from {file_path}")
 
             replicas = extract_field_by_jsonpath(yaml_data, "spec.replicas")
             if replicas is not None:
@@ -717,7 +711,6 @@ class GuideLLMParser:
                     "gpu_type",
                     "product_version",
                     "deployment_profile",
-                    "model_name",
                     "cluster",
                     "benchmark_key",
                 ]

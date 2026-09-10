@@ -42,7 +42,6 @@ class _PlotRegistry:
                 "function": generate_comprehensive_performance_report,
                 "type": "report",
                 "kwargs": {
-                    "report_number": 0,
                     "report_title": "GuideLLM Performance Analysis",
                 },
                 "description": "comprehensive performance analysis report (recommended)",
@@ -51,7 +50,6 @@ class _PlotRegistry:
                 "function": generate_deployment_profile_report,
                 "type": "report",
                 "kwargs": {
-                    "report_number": 2,
                     "report_title": "GuideLLM Deployment Profile Analysis",
                 },
                 "description": "performance analysis comparing different product versions/models under identical test conditions",
@@ -156,7 +154,7 @@ class GuideLLMPlugin(PostProcessingPlugin):
                 my_custom_function,
                 "My custom analysis",
                 type_="plot",
-                report_number=10
+                custom_param="value"
             )
         """
         PLOT_REGISTRY[name] = {
@@ -177,7 +175,8 @@ class GuideLLMPlugin(PostProcessingPlugin):
         """Generate visualization reports for GuideLLM benchmarks."""
         output_dir.mkdir(parents=True, exist_ok=True)
         paths: list[str] = []
-        wanted = frozenset(report_ids or ())
+        # Preserve caller-supplied order while removing duplicates
+        wanted = list(dict.fromkeys(report_ids or ()))
 
         # Filter to only GuideLLM records with benchmarks
         guidellm_records = [
@@ -191,6 +190,7 @@ class GuideLLMPlugin(PostProcessingPlugin):
 
         # Generate reports using the registry
         invalid_reports: list[str] = []
+        report_counter = 0
 
         for report_name in wanted:
             if report_name not in PLOT_REGISTRY:
@@ -200,7 +200,12 @@ class GuideLLMPlugin(PostProcessingPlugin):
 
             plot_config = PLOT_REGISTRY[report_name]
             function = plot_config["function"]
-            kwargs = plot_config.get("kwargs", {})
+            kwargs = plot_config.get("kwargs", {}).copy()  # Copy to avoid modifying the registry
+
+            # Add automatic report numbering for report types
+            if plot_config["type"] == "report":
+                kwargs["report_number"] = report_counter
+                report_counter += 1
 
             try:
                 # Call the generator function with records, output_dir, and any additional kwargs

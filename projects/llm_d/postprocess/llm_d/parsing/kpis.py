@@ -19,6 +19,18 @@ from projects.caliper.engine.model import UnifiedRunModel
 class GuideLLMKpiHandler:
     """Handles KPI catalog and computation for GuideLLM benchmarks."""
 
+    # Define required labels that must be present in the final label set
+    REQUIRED_LABELS = {
+        "model_name",
+        "product_version",
+        "deployment_profile",
+        "guidellm_loadshape",
+        "gpu_type",
+        "platform",
+        "test_harness",
+        "benchmark_key",
+    }
+
     # Define custom label extractor for GuideLLM with fallbacks for missing kpi_labels
     @staticmethod
     def _extract_labels(record) -> dict[str, Any]:
@@ -33,7 +45,6 @@ class GuideLLMKpiHandler:
             "product_version": "metrics.product_version",
             "cluster": "metrics.cluster",
             "deployment_profile": "metrics.deployment_profile",
-            "model_name": "metrics.model_name",
             "guidellm_loadshape": "metrics.benchmark_key",
         }
 
@@ -45,6 +56,11 @@ class GuideLLMKpiHandler:
         labels |= record.metrics.get("kpi_labels", {}) or {}
 
         return labels
+
+    @staticmethod
+    def _validate_required_labels(labels: dict[str, Any]) -> set[str]:
+        """Validate required labels and return any missing labels."""
+        return GuideLLMKpiHandler.REQUIRED_LABELS - labels.keys()
 
     LABEL_EXTRACTOR = type("TestLabelExtractor", (), {"extract": _extract_labels})()
 
@@ -122,6 +138,20 @@ class GuideLLMKpiHandler:
             status = KpiComputationStatus.failure_status(error_msg)
             return [], status
 
+        # Check for missing required labels in records
+        invalid_label_records = []
+        for r in valid_records:
+            test_condition_labels = GuideLLMKpiHandler.LABEL_EXTRACTOR.extract(r)
+            missing_labels = GuideLLMKpiHandler._validate_required_labels(test_condition_labels)
+            if missing_labels:
+                invalid_label_records.append(
+                    {
+                        "test_path": r.test_base_path,
+                        "missing_labels": sorted(missing_labels),
+                        "available_labels": sorted(test_condition_labels.keys()),
+                    }
+                )
+
         # Group records by test path for curve KPIs (same test, different rates)
         from collections import defaultdict
 
@@ -135,6 +165,12 @@ class GuideLLMKpiHandler:
         # Generate scalar KPIs for each record
         for r in valid_records:
             test_condition_labels = GuideLLMKpiHandler.LABEL_EXTRACTOR.extract(r)
+
+            # Skip records with missing required labels
+            missing_labels = GuideLLMKpiHandler._validate_required_labels(test_condition_labels)
+            if missing_labels:
+                continue
+
             metadata_fields = GuideLLMKpiHandler.extract_metadata(r)
 
             # Compute scalar KPIs only
@@ -183,6 +219,12 @@ class GuideLLMKpiHandler:
                 continue
 
             kpi_labels = GuideLLMKpiHandler.LABEL_EXTRACTOR.extract(r)
+
+            # Skip records with missing required labels
+            missing_labels = GuideLLMKpiHandler._validate_required_labels(kpi_labels)
+            if missing_labels:
+                continue
+
             metadata_fields = GuideLLMKpiHandler.extract_metadata(r)
 
             # Generate curve KPIs from performance curves
@@ -224,6 +266,22 @@ class GuideLLMKpiHandler:
 
                 out.append(kpi_record)
                 processed_records.add(r.test_base_path)  # Track that this record produced a KPI
+
+        # Check if any records had missing required labels
+        if invalid_label_records:
+            error_msg = (
+                f"Found missing required labels in {len(invalid_label_records)} test paths:\n"
+                + "\n".join(
+                    [
+                        f"  - {r['test_path']}: missing {r['missing_labels']}, available {r['available_labels']}"
+                        for r in invalid_label_records[:3]
+                    ]
+                )
+                + ("..." if len(invalid_label_records) > 3 else "")
+                + "\nPlease ensure all required labels are set in the KPI labels configuration."
+            )
+            status = KpiComputationStatus.failure_status(error_msg)
+            return out, status
 
         # Create success status
         status = KpiComputationStatus.success_status(len(processed_records), len(valid_records))

@@ -161,6 +161,14 @@ def extract_kpi_labels_from_config() -> dict[str, str]:
     if product_version:
         kpi_labels["product_version"] = product_version
 
+    model_name = runtime_config.get_model_name()
+    if model_name:
+        kpi_labels["model_name"] = model_name
+
+    platform = config.project.get_config("cpt.kpi.labels.platform")
+    if product_version:
+        kpi_labels["platform"] = platform
+
     return kpi_labels
 
 

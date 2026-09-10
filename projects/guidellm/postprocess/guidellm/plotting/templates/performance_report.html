@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang='en'>
+<head>
+    <meta charset='UTF-8'>
+    <meta name='viewport' content='width=device-width, initial-scale=1.0'>
+    <title>{{ display_title }}</title>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <style>
+        body {font-family: Arial, sans-serif; margin: 40px; }
+        .header {text-align: center; margin-bottom: 30px; }
+        .loadshape-section {margin: 40px 0; }
+        .loadshape-title {color: #333; font-size: 24px; margin-bottom: 20px; border-bottom: 2px solid #007acc; padding-bottom: 10px; }
+        .navigation {background-color: #f5f5f5; padding: 15px; border-radius: 4px; margin-bottom: 20px; }
+        .navigation ul {list-style: none; padding: 0; margin: 0; }
+        .navigation li {display: inline-block; margin-right: 20px; }
+        .navigation a {color: #007acc; text-decoration: none; font-weight: bold; }
+        .navigation a:hover {text-decoration: underline; }
+
+        .tabs-container {
+            margin: 20px 0;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            background-color: #f9f9f9;
+        }
+
+        .tab-headers {
+            display: flex;
+            background-color: #f1f1f1;
+            border-bottom: 1px solid #ddd;
+            border-top-left-radius: 8px;
+            border-top-right-radius: 8px;
+            flex-wrap: wrap;
+        }
+
+        .tab-header {
+            background-color: #e1e1e1;
+            color: #333;
+            padding: 15px 20px;
+            cursor: pointer;
+            border: none;
+            border-right: 1px solid #ddd;
+            font-family: Arial, sans-serif;
+            font-size: 16px;
+            font-weight: bold;
+            transition: background-color 0.3s;
+            flex: 1;
+            min-width: 150px;
+        }
+
+        .tab-header:hover {
+            background-color: #d1d1d1;
+        }
+
+        .tab-header.active {
+            background-color: #4CAF50;
+            color: white;
+        }
+
+        .tab-header:first-child {
+            border-top-left-radius: 8px;
+        }
+
+        .tab-header:last-child {
+            border-right: none;
+            border-top-right-radius: 8px;
+        }
+
+        .tab-content {
+            padding: 20px;
+            background-color: white;
+            display: none;
+            border-bottom-left-radius: 8px;
+            border-bottom-right-radius: 8px;
+            width: 100%;
+            min-height: 600px;
+        }
+
+        .tab-content.active {
+            display: block;
+            height: auto !important;
+            min-height: auto !important;
+            width: 100%;
+        }
+
+        .tab-content > div {
+            width: 100% !important;
+            height: auto !important;
+        }
+
+        .tab-content .plotly-graph-div {
+            width: 100% !important;
+            height: 600px !important;
+            min-width: 100% !important;
+            max-width: 100% !important;
+        }
+
+        .tab-content .plotly-graph-div .svg-container {
+            width: 100% !important;
+            height: 100% !important;
+        }
+
+        .tab-content .js-plotly-plot {
+            width: 100% !important;
+            height: 600px !important;
+        }
+
+        details {
+            height: auto !important;
+            min-height: auto !important;
+        }
+
+        details[open] {
+            height: auto !important;
+            min-height: auto !important;
+        }
+
+        details > div {
+            height: auto !important;
+            min-height: auto !important;
+        }
+
+        .performance-insights {
+            border-radius: 5px;
+            padding: 0.5em;
+            background-color: lightgray;
+            margin-top: 15px;
+        }
+
+        .plot-container {
+            text-align: center;
+        }
+
+        .plot-container img {
+            max-width: 100%;
+            height: auto;
+            cursor: pointer;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+
+    </style>
+
+    <script>
+    function showTab(containerId, tabId, buttonElement) {
+        // Get the specific container
+        var container = document.getElementById(containerId);
+
+        // Hide all tab contents within this container
+        var contents = container.querySelectorAll('.tab-content');
+        for (var i = 0; i < contents.length; i++) {
+            contents[i].classList.remove('active');
+        }
+
+        // Remove active class from all headers within this container
+        var headers = container.querySelectorAll('.tab-header');
+        for (var i = 0; i < headers.length; i++) {
+            headers[i].classList.remove('active');
+        }
+
+        // Show selected tab content and mark header as active
+        document.getElementById(tabId).classList.add('active');
+        buttonElement.classList.add('active');
+
+        // Resize any Plotly plots in the newly visible tab
+        setTimeout(function() {
+            var activeTab = document.getElementById(tabId);
+            if (activeTab && typeof Plotly !== 'undefined') {
+                var plotlyDivs = activeTab.querySelectorAll('.plotly-graph-div');
+                for (var i = 0; i < plotlyDivs.length; i++) {
+                    var plotDiv = plotlyDivs[i];
+
+                    // Force the plot div to use full container width
+                    plotDiv.style.width = '100%';
+                    plotDiv.style.height = '600px';
+
+                    // Get the actual container width
+                    var containerWidth = plotDiv.parentNode.clientWidth;
+
+                    // Force relayout with explicit dimensions
+                    if (plotDiv._fullLayout) {
+                        Plotly.relayout(plotDiv, {
+                            width: containerWidth,
+                            height: 600,
+                            autosize: true
+                        });
+                    } else {
+                        // Fallback to resize if relayout not available
+                        Plotly.Plots.resize(plotDiv);
+                    }
+                }
+            }
+        }, 150);
+    }
+    </script>
+</head>
+<body>
+    <p><i>Click on the image to open the interactive full-size view of the plot.</i><br/>
+    <i>In the interactive view, click in the legend to hide a line, double click to see only this line.</i></p>
+
+    <div class="header">
+        <h1>{{ display_title }}</h1>
+        <p>{{ page_description }}</p>
+    </div>
+
+    <div class="navigation">
+        <h3>{{ nav_header }}</h3>
+        <ul>
+            {%- for group_desc, _, _ in all_plots_data %}
+            {%- set group_id = group_desc.replace(" ", "_").replace("=", "_").replace(",", "_") %}
+            <li><a href="#{{ group_id }}">{{ group_desc }}</a></li>
+            {%- endfor %}
+        </ul>
+    </div>
+
+    {%- set container_id = [0] %}
+    {%- for group_desc, plots, group_labels in all_plots_data %}
+    {%- set group_id = group_desc.replace(" ", "_").replace("=", "_").replace(",", "_") %}
+    <div class="loadshape-section" id="{{ group_id }}">
+        <h2 class="loadshape-title">{{ report_type.title() }}: {{ group_desc }}</h2>
+
+        {%- if report_type == "comprehensive" %}
+        <div id='tabs-container-{{ container_id[0] }}' class='tabs-container'>
+            <div class='tab-headers'>
+                {%- set tab_mapping = {
+                    "Token Throughput vs Concurrency": "🚀 Throughput",
+                    "TTFT Analysis": "⏱️ TTFT",
+                    "Token Throughput Percentiles": "📊 Throughput Percentiles",
+                    "Throughput Scaling": "📈 Scaling",
+                    "Latency vs Throughput": "⚖️ Latency Trade-off",
+                } %}
+                {%- for plot_name, png_path, html_path in plots %}
+                {%- set tab_title = tab_mapping.get(plot_name, plot_name) %}
+                {%- set active_class = " active" if loop.index0 == 0 else "" %}
+                <button class='tab-header{{ active_class }}' onclick="showTab('tabs-container-{{ container_id[0] }}', 'tab-{{ container_id[0] }}-{{ loop.index0 }}', this)">{{ tab_title }}</button>
+                {%- endfor %}
+            </div>
+
+            {%- set descriptions = {
+                "Token Throughput vs Concurrency": "Token generation throughput scaling analysis across different concurrency levels.",
+                "TTFT Analysis": "Time To First Token analysis - measuring responsiveness and initial latency.",
+                "Token Throughput Percentiles": "Complete token throughput percentile distribution analysis.",
+                "Throughput Scaling": "Throughput scaling behavior and efficiency analysis.",
+                "Latency vs Throughput": "Trade-off analysis between latency and throughput performance.",
+            } %}
+
+            {%- for plot_name, png_path, html_path in plots %}
+            {%- set active_class = " active" if loop.index0 == 0 else "" %}
+            {%- set description = descriptions.get(plot_name, plot_name + " performance analysis.") %}
+            <div id='tab-{{ container_id[0] }}-{{ loop.index0 }}' class='tab-content{{ active_class }}' style='height: auto; min-height: auto;'>
+                <div style='padding:20px; height: auto; min-height: auto;'>
+                    <h4>{{ plot_name }}</h4>
+                    <p>{{ description }}</p>
+                    {{ embed_plot_for_report(png_path, html_path, plot_name, output_dir) }}
+                </div>
+            </div>
+            {%- endfor %}
+        </div>
+        {%- set _ = container_id.append(container_id.pop() + 1) %}
+
+        {%- else %}
+        {%- set descriptions = {
+            "Token Throughput vs Concurrency": "Token generation throughput scaling analysis across different concurrency levels.",
+            "TTFT Analysis": "Time To First Token analysis - measuring responsiveness and initial latency.",
+            "Token Throughput Percentiles": "Complete token throughput percentile distribution analysis.",
+            "Throughput Scaling": "Throughput scaling behavior and efficiency analysis.",
+            "Latency vs Throughput": "Trade-off analysis between latency and throughput performance.",
+        } %}
+        {%- for plot_name, png_path, html_path in plots %}
+        {%- set description = descriptions.get(plot_name, plot_name + " performance analysis.") %}
+        <div style='padding:20px; margin-bottom:30px; height: auto; min-height: auto;'>
+            <h4>📊 {{ plot_name }}</h4>
+            <p>{{ description }}</p>
+            {{ embed_plot_for_report(png_path, html_path, plot_name, output_dir) }}
+        </div>
+        {%- endfor %}
+        {%- endif %}
+    </div>
+    {%- endfor %}
+
+</body>
+</html>

@@ -88,6 +88,20 @@ def _update_fjob_export_status(status: ExportStatus):
         patch_result = run.run(patch_cmd, check=False)
         if patch_result.returncode == 0:
             logger.info(f"Updated fjob/{fjob_name} status with export artifacts status")
+
+            # Save a copy of the updated fjob to metadata directory
+            try:
+                metadata_dir = ci_lib.get_ci_metadata_dir()
+                fournos_fjob_path = metadata_dir / "fournos_fjob.yaml"
+                fournos_fjob_path.parent.mkdir(parents=True, exist_ok=True)
+
+                with open(fournos_fjob_path, "w", encoding="utf-8") as f:
+                    yaml.dump(fjob_data, f, indent=2, default_flow_style=False)
+
+                logger.info(f"Saved updated fjob copy to {fournos_fjob_path}")
+
+            except Exception as e:
+                logger.warning(f"Failed to save fjob copy to metadata directory: {e}")
         else:
             logger.warning(f"Failed to update fjob status: {patch_cmd}")
 

@@ -45,3 +45,45 @@ custom:
   data: "prompt_tokens=1000,output_tokens=1000"
   rates: [1]
   max_seconds: 450
+
+# ---------------------------------------------------------------------------
+# CPU Workloads (vLLM CPU benchmarking — matches format-results cpueval suite)
+# ---------------------------------------------------------------------------
+
+# Smoke test (CI-friendly, short duration)
+cpu-smoke:
+  data: "prompt_tokens=512,output_tokens=512"
+  rates: [1, 2, 4]
+  max_seconds: 120
+
+# Phase 1: fixed-length baseline workloads
+cpu-chat-baseline:
+  data: "prompt_tokens=512,output_tokens=512"
+  rates: [1, 2, 4, 8, 16, 32]
+  max_seconds: 600
+
+cpu-rag-baseline:
+  data: "prompt_tokens=7680,output_tokens=512"
+  rates: [1, 2, 4, 8, 16]
+  max_seconds: 600
+
+cpu-code-baseline:
+  data: "prompt_tokens=1024,output_tokens=1024"
+  rates: [1, 2, 4, 8, 16, 32]
+  max_seconds: 600
+
+cpu-summarization-baseline:
+  data: "prompt_tokens=2048,output_tokens=256"
+  rates: [1, 2, 4, 8, 16]
+  max_seconds: 600
+
+# Phase 2: variable-length realistic workloads (no prefix caching)
+cpu-chat-realistic:
+  data: "prompt_tokens=512,prompt_tokens_stdev=128,prompt_tokens_min=1,prompt_tokens_max=1024,output_tokens=512,output_tokens_stdev=128,output_tokens_min=1,output_tokens_max=1024"
+  rates: [1, 2, 4, 8, 16, 32]
+  max_seconds: 600
+
+cpu-code-realistic:
+  data: "prompt_tokens=1024,prompt_tokens_stdev=256,prompt_tokens_min=1,prompt_tokens_max=2048,output_tokens=1024,output_tokens_stdev=256,output_tokens_min=1,output_tokens_max=2048"
+  rates: [1, 2, 4, 8, 16, 32]
+  max_seconds: 600

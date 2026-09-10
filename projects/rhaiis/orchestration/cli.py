@@ -50,7 +50,17 @@ def cli(ctx):
 @click.option("--workload", "-w", default=None, help="Workload profile name")
 @click.option("--namespace", "-n", default=None, help="Kubernetes namespace")
 @click.option("--deployment-name", default=None, help="Deployment name (defaults to model name)")
-@click.option("--accelerator", type=click.Choice(["nvidia", "amd"]), default=None)
+@click.option(
+    "--accelerator",
+    type=click.Choice(["nvidia", "amd", "cpu", "l40s"]),
+    default=None,
+)
+@click.option(
+    "--cpu-flavor",
+    type=click.Choice(["rhaiis", "vanilla"]),
+    default=None,
+    help="CPU vLLM flavor: 'vanilla' (upstream) or 'rhaiis' (Red Hat)",
+)
 @click.option(
     "--engine",
     type=click.Choice(["vllm", "sglang", "trtllm"]),
@@ -76,6 +86,7 @@ def test(
     namespace: str | None,
     deployment_name: str | None,
     accelerator: str | None,
+    cpu_flavor: str | None,
     engine: str | None,
     serving_image: str | None,
     tensor_parallel: int | None,
@@ -100,6 +111,7 @@ def test(
     _apply_cli_overrides(
         workload_key=workload_key,
         accelerator=accelerator,
+        cpu_flavor=cpu_flavor,
         engine=engine,
         serving_image=serving_image,
         tensor_parallel=tensor_parallel,
@@ -119,7 +131,7 @@ def test(
     from projects.rhaiis.orchestration import test_phase
 
     try:
-        test_phase.run(
+        ret = test_phase.run(
             model_key=model_key,
             workload_keys=[workload_key],
             namespace=namespace,
@@ -129,6 +141,9 @@ def test(
         click.echo(f"Run failed: {exc}")
         raise SystemExit(1) from exc
 
+    if ret != 0:
+        raise SystemExit(ret)
+
     click.echo("Benchmark completed successfully.")
 
 
@@ -136,6 +151,7 @@ def _apply_cli_overrides(
     *,
     workload_key: str,
     accelerator: str | None,
+    cpu_flavor: str | None,
     engine: str | None,
     serving_image: str | None,
     tensor_parallel: int | None,
@@ -149,14 +165,26 @@ def _apply_cli_overrides(
 ) -> None:
     if accelerator:
         config.project.set_config("rhaiis.accelerator", accelerator)
+    if cpu_flavor:
+        config.project.set_config("rhaiis.cpu_flavor", cpu_flavor)
+        if not accelerator:
+            config.project.set_config("rhaiis.accelerator", "cpu")
     if engine:
         config.project.set_config("rhaiis.engine", engine)
     resolved_engine = runtime_config.get_engine()
+    resolved_accel = runtime_config.get_accelerator()
     if serving_image:
-        resolved_accel = runtime_config.get_accelerator()
-        config.project.set_config(
-            f"rhaiis.engines.{resolved_engine}.images.{resolved_accel}", serving_image
-        )
+        if resolved_accel == "cpu":
+            flavor = runtime_config.get_cpu_flavor()
+            cpu_image_key = (
+                "rhaiis.images.cpu-vanilla" if flavor == "vanilla" else "rhaiis.images.cpu"
+            )
+            config.project.set_config(cpu_image_key, serving_image)
+        else:
+            config.project.set_config(
+                f"rhaiis.engines.{resolved_engine}.images.{resolved_accel}",
+                serving_image,
+            )
     if tensor_parallel is not None:
         tp_key = {"sglang": "tp-size", "trtllm": "tp_size"}.get(
             resolved_engine, "tensor-parallel-size"
@@ -171,7 +199,7 @@ def _apply_cli_overrides(
     if storage_pvc:
         config.project.set_config("rhaiis.deploy.storage_pvc", storage_pvc)
     if image_pull_secret:
-        config.project.set_config("rhaiis.deploy.image_pull_secret", image_pull_secret)
+        config.project.set_config("rhaiis.deploy.image_pull_secrets", [image_pull_secret])
     if service_account_name:
         config.project.set_config("rhaiis.deploy.service_account_name", service_account_name)
     if rates:
@@ -211,10 +239,149 @@ def _print_dry_run(
     click.echo(
         f"  Storage: {deploy_cfg.get('storage_source', 'hf')} (pvc={deploy_cfg.get('storage_pvc', '')})"
     )
-    click.echo(f"  Image pull secret: {deploy_cfg.get('image_pull_secret') or '(none)'}")
+    click.echo(f"  Image pull secrets: {deploy_cfg.get('image_pull_secrets') or '(none)'}")
     click.echo(f"  Service account: {deploy_cfg.get('service_account_name') or '(none)'}")
+    node_selector = deploy_cfg.get("node_selector") or {}
+    click.echo(f"  Node selector: {node_selector or '(none)'}")
     click.echo(f"  Rates: {workload_cfg.get('rates', [1])}")
     click.echo(f"  Max seconds: {workload_cfg.get('max_seconds', 180)}")
+    if accelerator == "cpu":
+        click.echo(f"  CPU flavor: {runtime_config.get_cpu_flavor()}")
+
+
+@cli.command("concurrent-load")
+@click.option(
+    "--preset",
+    "-p",
+    multiple=True,
+    help="Preset name(s) from presets.d/",
+)
+@click.option(
+    "--models",
+    "-m",
+    default=None,
+    help="Comma-separated model keys (e.g. tinyllama-cpu,qwen3-0-6b-cpu)",
+)
+@click.option(
+    "--cpu-requests",
+    default=None,
+    help="Comma-separated CPU request values to sweep (e.g. 8,16,32)",
+)
+@click.option(
+    "--workloads",
+    "-w",
+    default=None,
+    help="Comma-separated workload keys (e.g. cpu-chat-baseline,cpu-rag-baseline)",
+)
+@click.option("--namespace", "-n", default=None, help="Kubernetes namespace")
+@click.option(
+    "--cpu-flavor",
+    type=click.Choice(["rhaiis", "vanilla"]),
+    default=None,
+    help="CPU vLLM flavor: 'vanilla' (upstream) or 'rhaiis' (Red Hat)",
+)
+@click.option("--image-pull-secret", help="Image pull secret name")
+@click.option("--service-account-name", help="Service account name for predictor")
+@click.option("--continue-on-error", is_flag=True, help="Keep running if a cell fails")
+@click.option("--dry-run", is_flag=True, help="Print the matrix without running")
+@click.pass_context
+def concurrent_load(
+    ctx,
+    preset: tuple[str, ...],
+    models: str | None,
+    cpu_requests: str | None,
+    workloads: str | None,
+    namespace: str | None,
+    cpu_flavor: str | None,
+    image_pull_secret: str | None,
+    service_account_name: str | None,
+    continue_on_error: bool,
+    dry_run: bool,
+):
+    """Run the concurrent load matrix: models x cpu_requests x workloads."""
+    for name in preset:
+        config.project.apply_preset(name)
+
+    if cpu_flavor:
+        config.project.set_config("rhaiis.cpu_flavor", cpu_flavor)
+        config.project.set_config("rhaiis.accelerator", "cpu")
+    if image_pull_secret:
+        config.project.set_config("rhaiis.deploy.image_pull_secrets", [image_pull_secret])
+    if service_account_name:
+        config.project.set_config("rhaiis.deploy.service_account_name", service_account_name)
+
+    from projects.rhaiis.orchestration.cpu_concurrent_load_phase import (
+        DEFAULT_CPU_REQUESTS,
+        DEFAULT_MODEL_KEYS,
+        DEFAULT_WORKLOAD_KEYS,
+    )
+
+    if models:
+        model_keys = [x.strip() for x in models.split(",") if x.strip()]
+        if not model_keys:
+            raise click.BadParameter(
+                "produced an empty list; check for stray commas",
+                param_hint="'--models'",
+            )
+    else:
+        model_keys = DEFAULT_MODEL_KEYS
+
+    if cpu_requests:
+        cpu_request_list = [x.strip() for x in cpu_requests.split(",") if x.strip()]
+        if not cpu_request_list:
+            raise click.BadParameter(
+                "produced an empty list; check for stray commas",
+                param_hint="'--cpu-requests'",
+            )
+    else:
+        cpu_request_list = DEFAULT_CPU_REQUESTS
+
+    if workloads:
+        workload_keys = [x.strip() for x in workloads.split(",") if x.strip()]
+        if not workload_keys:
+            raise click.BadParameter(
+                "produced an empty list; check for stray commas",
+                param_hint="'--workloads'",
+            )
+    else:
+        workload_keys = DEFAULT_WORKLOAD_KEYS
+    resolved_ns = namespace or runtime_config.get_namespace()
+    resolved_flavor = runtime_config.get_cpu_flavor()
+
+    total = len(model_keys) * len(cpu_request_list) * len(workload_keys)
+    click.echo(
+        f"Concurrent load matrix: {len(model_keys)} model(s) x "
+        f"{len(cpu_request_list)} cpu_request(s) x "
+        f"{len(workload_keys)} workload(s) = {total} cell(s)"
+    )
+    click.echo(f"  Models:       {model_keys}")
+    click.echo(f"  CPU requests: {cpu_request_list}")
+    click.echo(f"  Workloads:    {workload_keys}")
+    click.echo(f"  Namespace:    {resolved_ns}")
+    click.echo(f"  CPU flavor:   {resolved_flavor}")
+
+    if dry_run:
+        click.echo("[DRY-RUN] Would run the above matrix.")
+        return
+
+    from projects.rhaiis.orchestration import cpu_concurrent_load_phase
+
+    try:
+        ret = cpu_concurrent_load_phase.run(
+            model_keys=model_keys,
+            cpu_requests=cpu_request_list,
+            workload_keys=workload_keys,
+            namespace=resolved_ns,
+            continue_on_error=continue_on_error,
+        )
+    except Exception as exc:
+        click.echo(f"Run failed: {exc}")
+        raise SystemExit(1) from exc
+
+    if ret != 0:
+        raise SystemExit(ret)
+
+    click.echo("Concurrent load benchmark completed successfully.")
 
 
 @cli.command()

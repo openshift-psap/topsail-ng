@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+import base64
+import json
 import logging
 import os
 import types
@@ -12,6 +14,7 @@ import test_rhaiis
 from projects.core.agentic.config_review import trigger_config_review_for_ci
 from projects.core.agentic.on_failure import agent_review_on_failure
 from projects.core.ci_entrypoint.fournos_resolve import create_fournos_resolve_entrypoint
+from projects.core.dsl.utils.k8s import oc
 from projects.core.library import ci as ci_lib
 from projects.core.library import env, vault
 from projects.core.library.export import caliper_export_entrypoint
@@ -97,6 +100,16 @@ def resolve_hardware_request(hardware_spec: dict) -> dict:
     if hardware_spec.get("gpuType"):
         return hardware_spec
 
+    # No hardware section in the FournosJob → CPU/no-hardware job, don't add GPU resources.
+    # GPU jobs submitted via fournos_launcher always have both gpuCount and gpuType set
+    # (enforced by submit.py pair validation), so they always hit the gpuType check above.
+    if not hardware_spec:
+        return {}
+
+    accelerator = runtime_config.get_accelerator()
+    if accelerator == "cpu":
+        return {}
+
     from projects.core.library import config as _cfg
 
     model_key = runtime_config.get_test_model_key()
@@ -106,7 +119,6 @@ def resolve_hardware_request(hardware_spec: dict) -> dict:
     ea = runtime_config.merge_engine_args(engine_defaults, model, {}, engine)
     tp_size = int(ea.get("tensor-parallel-size") or ea.get("tp-size") or ea.get("tp_size") or 1)
 
-    accelerator = runtime_config.get_accelerator()
     gpu_type = runtime_config.get_gpu_type(accelerator)
 
     if not gpu_type:
@@ -161,17 +173,91 @@ def pre_cleanup(ctx):
 @ci_lib.safe_ci_entrypoint
 def post_cleanup(ctx):
     """Post-cleanup phase - Clean up resources after test."""
-    _check_pipeline_failure_and_notify()
-    return prepare_rhaiis.cleanup()
+    cleanup_result = None
+    try:
+        if runtime_config.get_accelerator() == "cpu":
+            from projects.rhaiis.toolbox.diagnose_cpu_cluster.main import (
+                run as diagnose_cpu_cluster,
+            )
+
+            diagnose_cpu_cluster(remove_labels=True)
+            ns = runtime_config.get_namespace()
+            oc(
+                "delete", "secret", "storage-config", "-n", ns,
+                "--ignore-not-found", check=False, log_stdout=False,
+            )
+    finally:
+        _check_pipeline_failure_and_notify()
+        cleanup_result = prepare_rhaiis.cleanup()
+    return cleanup_result
+
+
+def _ensure_storage_config_secret(namespace: str) -> None:
+    """Create storage-config secret with HF_TOKEN if it does not already exist.
+
+    CPU-only helper: mirrors the secret GPU clusters pre-provision manually.
+    """
+    result = oc("get", "secret", "storage-config", "-n", namespace, check=False, log_stdout=False)
+    if result.returncode == 0:
+        logger.info("Secret storage-config already exists in %s", namespace)
+        return
+
+    token_path = vault.get_vault_content_path("psap-forge-hf", "hf_token")
+    if token_path is None or not token_path.exists():
+        logger.warning(
+            "psap-forge-hf vault not available — storage-config secret must be "
+            "created manually in %s for HuggingFace model downloads to work",
+            namespace,
+        )
+        return
+
+    token_b64 = base64.b64encode(token_path.read_text().strip().encode()).decode()
+    manifest = {
+        "apiVersion": "v1",
+        "kind": "Secret",
+        "metadata": {"name": "storage-config", "namespace": namespace},
+        "type": "Opaque",
+        "data": {"HF_TOKEN": token_b64},
+    }
+    oc("apply", "-f", "-", input_text=json.dumps(manifest), handled_secretly=True)
+    logger.info("Created storage-config secret in %s", namespace)
+
+
+def _verify_model_pvc(namespace: str, pvc_name: str) -> None:
+    """Warn when the model-cache PVC is missing (GPU clusters pre-provision it manually)."""
+    result = oc("get", "pvc", pvc_name, "-n", namespace, check=False, log_stdout=False)
+    if result.returncode == 0:
+        logger.info("Model PVC %s exists in %s", pvc_name, namespace)
+    else:
+        logger.warning(
+            "Model PVC %s not found in %s — create it manually before deploying "
+            "(see CPU_TESTING.md)",
+            pvc_name,
+            namespace,
+        )
 
 
 @main.command()
 @click.pass_context
 @ci_lib.safe_ci_entrypoint
 def preflight(ctx) -> int:
-    """Preflight check phase - Validate that the cluster if ready for testing."""
+    """Preflight check phase - Validate that the cluster is ready for testing."""
 
-    logger.warning("Nothing so far for the preflight check")
+    if runtime_config.get_accelerator() == "cpu":
+        from projects.rhaiis.toolbox.diagnose_cpu_cluster.main import (
+            run as diagnose_cpu_cluster,
+        )
+
+        namespace = runtime_config.get_namespace()
+        diagnose_cpu_cluster(apply_labels=True)
+        diagnose_cpu_cluster(strict=True)
+
+        _ensure_storage_config_secret(namespace)
+
+        deploy_cfg = runtime_config.get_deploy_config()
+        pvc_name = deploy_cfg.get("storage_pvc", "")
+        if pvc_name:
+            _verify_model_pvc(namespace, pvc_name)
 
     return 0
 

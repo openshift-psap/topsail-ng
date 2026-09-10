@@ -1,11 +1,17 @@
 namespace: kserve-e2e-perf
 accelerator: nvidia
+cpu_flavor: vanilla
 cluster_tag: ""
 
 gpu_types:
   nvidia: h200
   amd: mi300x
   l40s: l40s
+
+# CPU image fallback (not engine-scoped since vLLM CPU is a distinct build)
+images:
+  cpu: registry.redhat.io/rhaii/vllm-cpu-rhel9:3.5.0-1786546771
+  cpu-vanilla: docker.io/vllm/vllm-openai-cpu:v0.25.1
 
 engine: vllm
 
@@ -58,10 +64,17 @@ deploy:
   memory_request: "16Gi"
   storage_source: hf
   storage_pvc: model-pvc
+  storage_pvc_size: 200Gi
   image_pull_secrets: []
   service_account_name: ""
   ready_timeout: 3600
   health_check_timeout: 120
+  node_selector: {}
+
+vllm_args_cpu:
+  no-enable-log-requests: true
+  uvicorn-log-level: debug
+  tensor-parallel-size: 1
 
 env_vars: {}
 
@@ -69,6 +82,11 @@ accelerator_env_vars:
   nvidia: {}
   amd:
     VLLM_ROCM_USE_AITER: "1"
+  cpu:
+    VLLM_CPU_KVCACHE_SPACE: "10"
+  cpu-rhaiis:
+    LD_PRELOAD: /usr/lib64/libomp.so
+  cpu-vanilla: {}
 
 s3:
   bucket: psap-dashboard-data

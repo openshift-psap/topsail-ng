@@ -4,6 +4,7 @@ vaults:
 - psap-forge-aws-s3-export
 - psap-forge-dashboard-s3
 - psap-models-corp-rh
+- psap-forge-hf
 
 benchmarks:
   guidellm:

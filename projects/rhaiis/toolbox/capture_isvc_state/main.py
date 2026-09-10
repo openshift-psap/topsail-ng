@@ -198,7 +198,6 @@ def capture_pods_describe(args, context):
             f.write(f"=== Describe for pod: {pod_name} ===\n")
             describe_result = shell.run(
                 f"oc describe pod {pod_name} -n {context.target_namespace}",
-                log_stdout=False,
                 check=False,
             )
             f.write(describe_result.stdout)

@@ -144,7 +144,7 @@ ignore = [
 [tool.pytest.ini_options]
 minversion = "7.0"
 addopts = "-ra -q --strict-markers --strict-config"
-testpaths = ["projects/core/tests", "projects/llm_d/tests", "projects/caliper/tests"]
+testpaths = ["projects/core/tests", "projects/llm_d/tests", "projects/caliper/tests", "projects/fournos_launcher/tests", "projects/rhaiis/orchestration"]
 python_files = ["test_*.py", "*_test.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]

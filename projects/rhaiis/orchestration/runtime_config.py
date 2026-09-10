@@ -8,6 +8,20 @@ from projects.core.library import config, env, run
 logger = logging.getLogger(__name__)
 
 CONFIG_DIR = pathlib.Path(__file__).resolve().parent
+MEMORY_GIB_PER_CPU_CORE = 4
+
+# Args shared between GPU and CPU vLLM builds; CLI overrides land under engines.<engine>.args.
+_CPU_SHARED_ENGINE_ARG_KEYS = frozenset(
+    {
+        "tensor-parallel-size",
+        "data-parallel-size",
+    }
+)
+
+
+def memory_request_for_cpu(cpu_request: str) -> str:
+    """Derive memory request from CPU request (4 GiB/core, matching CPU presets)."""
+    return f"{int(cpu_request) * MEMORY_GIB_PER_CPU_CORE}Gi"
 
 
 def init() -> None:
@@ -22,6 +36,10 @@ def get_namespace() -> str:
 
 def get_accelerator() -> str:
     return config.project.get_config("rhaiis.accelerator")
+
+
+def get_cpu_flavor() -> str:
+    return config.project.get_config("rhaiis.cpu_flavor", "vanilla")
 
 
 def get_gpu_type(accelerator: str) -> str | None:
@@ -45,14 +63,35 @@ def get_engine() -> str:
 
 def get_serving_image(accelerator: str, engine: str | None = None) -> str:
     engine = engine or get_engine()
+    if accelerator == "cpu":
+        flavor = get_cpu_flavor()
+        if flavor == "vanilla":
+            return config.project.get_config("rhaiis.images.cpu-vanilla")
+        return config.project.get_config("rhaiis.images.cpu")
+    engine_image_key = f"rhaiis.engines.{engine}.images.{accelerator}"
     try:
-        return config.project.get_config(f"rhaiis.engines.{engine}.images.{accelerator}")
-    except Exception:
+        return config.project.get_config(engine_image_key)
+    except KeyError:
+        logger.debug(
+            "Engine-scoped image missing at %s; falling back to rhaiis.images.%s",
+            engine_image_key,
+            accelerator,
+        )
         return config.project.get_config(f"rhaiis.images.{accelerator}")
 
 
 def get_engine_args(engine: str | None = None) -> dict:
     engine = engine or get_engine()
+    if get_accelerator() == "cpu":
+        cpu_args = config.project.get_config("rhaiis.vllm_args_cpu", None)
+        args = dict(cpu_args) if cpu_args else {}
+        # CLI overrides (e.g. --tensor-parallel) land under engines.<engine>.args.
+        engine_overrides = config.project.get_config(f"rhaiis.engines.{engine}.args", None)
+        if engine_overrides:
+            for key in _CPU_SHARED_ENGINE_ARG_KEYS:
+                if key in engine_overrides:
+                    args[key] = engine_overrides[key]
+        return args
     return dict(config.project.get_config(f"rhaiis.engines.{engine}.args", {}))
 
 
@@ -172,6 +211,11 @@ def merge_engine_args(
 def merge_env_vars(accelerator: str, model: dict) -> dict:
     base = dict(config.project.get_config("rhaiis.env_vars") or {})
     base.update(model.get("env_vars", {}))
+    if accelerator == "cpu":
+        for key in ("cpu", f"cpu-{get_cpu_flavor()}"):
+            accel_vars = config.project.get_config(f"rhaiis.accelerator_env_vars.{key}") or {}
+            base.update(accel_vars)
+        return base
     accel_vars = config.project.get_config(f"rhaiis.accelerator_env_vars.{accelerator}") or {}
     base.update(accel_vars)
     return base

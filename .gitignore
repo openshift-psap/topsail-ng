@@ -141,6 +141,9 @@ artifacts/
 *.tmp
 *.swp
 
+# Local test scripts (not for commit)
+test-*-local.sh
+
 # IDE
 .vscode/
 .idea/

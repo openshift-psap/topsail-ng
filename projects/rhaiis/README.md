@@ -240,6 +240,43 @@ spec:
     PULL_PULL_SHA: "<commit-sha-or-release-tag>"  # e.g. forge-rhaiis-v0.0.2
 ```
 
+### FournosJob YAML (CPU)
+
+CPU jobs require no `hardware:` section — Fournos schedules them on CPU-only nodes.
+Use the `cpu-chat-baseline` preset (RHAIIS flavor, llama31-8b-w8a8-cpu, KV=24 GiB) or
+`vanilla-cpu-chat-baseline` for the upstream vLLM image. The preset sets model,
+workload, flavor, 64 GiB memory, and `VLLM_CPU_KVCACHE_SPACE=24`; the overrides
+below raise CPU cores and memory for a production-sized node.
+
+```yaml
+apiVersion: fournos.dev/v1
+kind: FournosJob
+metadata:
+  generateName: rhaiis-cpu-benchmark-
+spec:
+  owner: haumesh
+  displayName: rhaiis-cpu-benchmark
+  pipeline: forge-full
+  cluster: zeus
+  secretRefs:
+  - psap-forge-dashboard-s3
+  - psap-forge-notifications
+  executionEngine:
+    forge:
+      project: rhaiis
+      args: [cpu-chat-baseline]
+      configOverrides:
+        tests.rhaiis.version: "vLLM-cpu-0.1.0"
+        rhaiis.images.cpu: <cpu-vllm-image>        # override RHAIIS image (rhaiis flavor)
+        # rhaiis.images.cpu-vanilla: <image>       # use this key for vanilla flavor
+        rhaiis.deploy.cpu_request: "32"
+        rhaiis.deploy.memory_request: "128Gi"
+        rhaiis.cluster_tag: "zeus-cpu"
+        caliper.postprocess.csv_dashboard.enabled: true
+  env:
+    PULL_PULL_SHA: "<commit-sha-or-release-tag>"
+```
+
 ### GitHub PR workflow
 
 Jobs can also be triggered via PR comments on `openshift-psap/forge`:
@@ -252,6 +289,16 @@ Jobs can also be triggered via PR comments on `openshift-psap/forge`:
 /var tests.rhaiis.version: vLLM-0.24.0
 /var tests.rhaiis.workload_keys: ["profile1"]
 /var rhaiis.engines.vllm.args.tensor-parallel-size: 2
+```
+
+CPU variant:
+
+```
+/test fournos rhaiis cpu-chat-baseline
+/pipeline forge-full
+/cluster zeus
+/var tests.rhaiis.version: vLLM-cpu-0.1.0
+/var rhaiis.images.cpu: <cpu-vllm-image>
 ```
 
 Note: `/var` directives use `key: value` format (colon required).
@@ -271,12 +318,17 @@ Available configOverrides:
 | `tests.rhaiis.slack_user` | Slack user ID for failure notifications |
 | `tests.rhaiis.compare_version` | Baseline version for regression comparison |
 | `rhaiis.engine` | Inference engine: `vllm` (default), `sglang`, `trtllm` |
+| `rhaiis.accelerator` | Accelerator type: `nvidia`, `amd`, or `cpu` |
+| `rhaiis.cpu_flavor` | CPU image variant: `rhaiis` (patched) or `vanilla` (upstream) |
+| `rhaiis.images.cpu` | Override RHAIIS CPU image (used when `cpu_flavor=rhaiis`) |
+| `rhaiis.images.cpu-vanilla` | Override vanilla CPU image (used when `cpu_flavor=vanilla`) |
 | `rhaiis.namespace` | Kubernetes namespace |
 | `rhaiis.cluster_tag` | Cluster identifier for dashboard grouping |
 | `rhaiis.deploy.image_pull_secrets` | List of image pull secret names |
 | `rhaiis.deploy.storage_pvc` | PVC name for model storage |
 | `rhaiis.deploy.replicas` | Number of predictor replicas |
-| `rhaiis.deploy.memory_request` | Memory request for predictor (e.g. `256Gi` for TRT-LLM) |
+| `rhaiis.deploy.cpu_request` | CPU cores to request for CPU-accelerator jobs (e.g. `"32"`) |
+| `rhaiis.deploy.memory_request` | Memory request for predictor (e.g. `256Gi` for TRT-LLM, `128Gi` for CPU) |
 | `rhaiis.engines.vllm.args.*` | vLLM CLI args (e.g. `tensor-parallel-size`, `gpu-memory-utilization`) |
 | `rhaiis.engines.sglang.args.*` | SGLang CLI args (e.g. `tp-size`, `mem-fraction-static`, `context-length`) |
 | `rhaiis.engines.trtllm.args.*` | TRT-LLM CLI args (e.g. `tp_size`, `ep_size`, `max_batch_size`) |

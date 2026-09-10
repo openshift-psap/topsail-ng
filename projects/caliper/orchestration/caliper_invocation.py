@@ -8,6 +8,7 @@ using subprocess execution with proper logging and status handling.
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
 import time
 import traceback
@@ -125,12 +126,21 @@ def _execute_caliper_command(
     # Write header to log file
     _write_step_header_to_log_file(log_file, command, step_name.upper())
 
-    # Execute command with combined stdout/stderr
+    # Execute command with combined stdout/stderr.
+    # Ensure the forge root is on PYTHONPATH so the caliper entry-point script
+    # can import `projects` even when invoked as a bare binary from a venv.
+    forge_root = str(env.FORGE_HOME)
+    existing_pp = os.environ.get("PYTHONPATH", "")
+    subprocess_env = {
+        **os.environ,
+        "PYTHONPATH": os.pathsep.join(filter(None, [forge_root, existing_pp])),
+    }
     result = subprocess.run(
         command,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,  # Combine stderr into stdout
         text=True,
+        env=subprocess_env,
     )
 
     # Handle output, status parsing, and log completion banner

@@ -88,6 +88,7 @@ def _run_test(
     workload_keys: list[str],
     namespace: str,
     deployment_name: str | None = None,
+    deploy_cfg_overrides: dict | None = None,
 ) -> int:
     _warnings.clear()
     model_cfg = runtime_config.get_model(model_key)
@@ -98,6 +99,8 @@ def _run_test(
     cluster_tag = _cfg.project.get_config("rhaiis.cluster_tag", "")
     accelerator_key = f"{gpu_type}_{cluster_tag}".upper() if cluster_tag else gpu_type.upper()
     deploy_cfg = runtime_config.get_deploy_config()
+    if deploy_cfg_overrides:
+        deploy_cfg.update(deploy_cfg_overrides)
     benchmark_cfg = runtime_config.get_benchmark_config()
 
     if not deployment_name:
@@ -227,6 +230,7 @@ def _run_test(
             engine_args=engine_args,
             engine_port=engine_port,
             storage_source=deploy_cfg.get("storage_source", "hf"),
+            storage_pvc=deploy_cfg.get("storage_pvc", ""),
             gpu_count=gpu_count,
             image_pull_secrets=deploy_cfg.get("image_pull_secrets") or [],
             env_vars=env_vars,
@@ -247,6 +251,7 @@ def _run_test(
             model_id=model_cfg["hf_model_id"],
             service_account_name=deploy_cfg.get("service_account_name", ""),
             labels=isvc_labels,
+            node_selector=deploy_cfg.get("node_selector") or None,
         )
         sr_file = env.ARTIFACT_DIR / "src" / "servingruntime.yaml"
         isvc_file = env.ARTIFACT_DIR / "src" / "inferenceservice.yaml"

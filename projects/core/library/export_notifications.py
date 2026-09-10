@@ -205,11 +205,21 @@ def _get_project_and_args(project: str) -> tuple[str, str]:
 
 def _extract_finish_reason_from_status(status: dict[str, Any]) -> str:
     """Extract finish reason from status."""
-    if not status.get("success", False):
+    success = status.get("success", False)
+    censoring_occurred = status.get("censoring_occurred", False)
+
+    logger.info(
+        f"DEBUG: Status analysis - success={success}, censoring_occurred={censoring_occurred}"
+    )
+
+    if not success:
+        logger.info(f"DEBUG: Finish reason: failed (success={success})")
         return "failed"
-    elif status.get("censoring_occurred", False):
+    elif censoring_occurred:
+        logger.info("DEBUG: Finish reason: completed with censoring")
         return "completed with censoring"
     else:
+        logger.info("DEBUG: Finish reason: completed")
         return "completed"
 
 
@@ -222,12 +232,25 @@ def _build_enhanced_notification(
     """Build enhanced notification with fournos job config and artifact links."""
     fjob_project, fjob_args_str = _get_project_and_args(project)
 
-    status_emoji = "✅" if status.get("success", False) else "❌"
-    if status.get("censoring_occurred", False):
+    success = status.get("success", False)
+    censoring_occurred = status.get("censoring_occurred", False)
+
+    logger.info(
+        f"DEBUG: Building notification - success={success}, censoring_occurred={censoring_occurred}, finish_reason='{finish_reason}'"
+    )
+
+    status_emoji = "✅" if success else "❌"
+    logger.info(f"DEBUG: Initial emoji based on success: {status_emoji}")
+
+    if censoring_occurred:
         status_emoji = "⚠️"
+        logger.info(f"DEBUG: Changed emoji to warning due to censoring: {status_emoji}")
 
     if finish_reason == "failed":
         status_emoji = "❌"
+        logger.info(f"DEBUG: Changed emoji to failed due to finish_reason: {status_emoji}")
+
+    logger.info(f"DEBUG: Final status emoji: {status_emoji}")
 
     base_status = f"{status_emoji} **Execution of `{fjob_project}` {fjob_args_str}** {status_emoji}"
     notification_parts = [base_status, ""]
@@ -517,13 +540,21 @@ def _get_postprocess_status_links(
     artifact_dir: Path | None, mlflow_run_url: str | None
 ) -> list[str]:
     """Get postprocess status links."""
+    logger.info(
+        f"DEBUG: Postprocess status - artifact_dir={artifact_dir}, mlflow_run_url={mlflow_run_url}"
+    )
+
     if not artifact_dir or not artifact_dir.exists():
+        logger.info("DEBUG: Postprocess status - artifact_dir missing or doesn't exist")
         return []
 
     step_log_links = []
 
     # Look for postprocess results in step directories
-    for step_dir in sorted(artifact_dir.glob("*")):
+    step_dirs = sorted(artifact_dir.glob("*"))
+    logger.info(f"DEBUG: Postprocess status - found {len(step_dirs)} directories in {artifact_dir}")
+
+    for step_dir in step_dirs:
         if not step_dir.is_dir() or step_dir.name.startswith("."):
             continue
 
@@ -535,14 +566,27 @@ def _get_postprocess_status_links(
 
         try:
             postprocess_status_file = step_dir / "postprocess_status.yaml"
+            logger.info(
+                f"DEBUG: Postprocess status - checking {step_name}, file={postprocess_status_file}"
+            )
+
             if not postprocess_status_file.exists():
+                logger.info(
+                    f"DEBUG: Postprocess status - {step_name}: postprocess_status.yaml not found"
+                )
                 continue
 
+            logger.info(
+                f"DEBUG: Postprocess status - {step_name}: postprocess_status.yaml exists, reading..."
+            )
             with open(postprocess_status_file, encoding="utf-8") as f:
                 status_data = yaml.safe_load(f.read())
 
             if not status_data:
+                logger.info(f"DEBUG: Postprocess status - {step_name}: status_data is empty")
                 continue
+
+            logger.info(f"DEBUG: Postprocess status - {step_name}: loaded status_data successfully")
 
             # Add job shutdown status if available
             if "job_shutdown" in status_data:
@@ -556,9 +600,15 @@ def _get_postprocess_status_links(
             )
 
             # Parse postprocess result
+            logger.info(f"DEBUG: Postprocess status - {step_name}: parsing status_data...")
             result = parse_postprocess_status(status_data)
             if not result:
+                logger.info(
+                    f"DEBUG: Postprocess status - {step_name}: parse_postprocess_status returned None/empty"
+                )
                 continue
+
+            logger.info(f"DEBUG: Postprocess status - {step_name}: parsed result successfully")
 
             # Create file link function for this step
             def get_file_link(file_path: Path, step_subdir: str = step_name) -> str:
@@ -567,15 +617,29 @@ def _get_postprocess_status_links(
                     return _create_mlflow_file_url_for_step(
                         mlflow_run_url, step_subdir, str(file_path)
                     )
+                else:
+                    # Fallback: just return the file path as text
+                    logger.info(f"DEBUG: Fallback: just return the file path as text ({file_path})")
+
+                    return str(file_path)
 
             # Generate notification text from the structured result
+            logger.info(f"DEBUG: Postprocess status - {step_name}: generating notification text...")
             notification_text = format_postprocess_status_notification(result, get_file_link)
             if notification_text:
+                logger.info(
+                    f"DEBUG: Postprocess status - {step_name}: notification text generated, adding to list"
+                )
                 step_log_links.append(notification_text)
+            else:
+                logger.info(f"DEBUG: Postprocess status - {step_name}: notification text is empty")
 
         except Exception as e:
             logger.exception(f"Failed to process postprocess status for {step_name}: {e}")
 
+    logger.info(
+        f"DEBUG: Postprocess status - returning {len(step_log_links)} postprocess status links"
+    )
     return step_log_links
 
 

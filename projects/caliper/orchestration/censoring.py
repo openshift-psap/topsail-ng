@@ -362,21 +362,18 @@ def _generate_censoring_report(censoring_results, from_path: Path) -> None:
         unexpected_censored_files = sum(
             len(files) for files in unexpected_censoring_by_reason.values()
         )
-        total_censored_files = safe_censored_files + unexpected_censored_files
+        clean_files_count = len([r for r in censoring_results if not r.censored])
 
         # Create report data
         report_data = {
             "timestamp": datetime.now().isoformat(),
             "source_directory": str(from_path),
-            "total_files": len(censoring_results),
-            "clean_files": len([r for r in censoring_results if not r.censored]),
-            "censored_files": total_censored_files,
+            "total_files": clean_files_count + safe_censored_files + unexpected_censored_files,
+            "clean_files": clean_files_count,
+            "censored_files": unexpected_censored_files,  # Only unexpected censoring
             "safe_censored_files": safe_censored_files,
-            "unexpected_censored_files": unexpected_censored_files,
             "safe_censoring_by_reason": safe_censoring_by_reason,
-            "unexpected_censoring_by_reason": unexpected_censoring_by_reason,
-            # Keep old format for compatibility
-            "censored_by_reason": {**safe_censoring_by_reason, **unexpected_censoring_by_reason},
+            "censored_by_reason": unexpected_censoring_by_reason,  # Only unexpected censoring
         }
 
         # Write report to ARTIFACT_DIR

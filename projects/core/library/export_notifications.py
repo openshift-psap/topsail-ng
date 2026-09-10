@@ -281,6 +281,14 @@ def _build_enhanced_notification(
             notification_parts.append("**Post-processing Status** ✅")
             notification_parts.extend(postprocess_status_links)
 
+        # Add censoring report section if available
+        censoring_report_section = _get_censoring_report_section(artifact_dir)
+        if censoring_report_section:
+            notification_parts.append("")
+            notification_parts.append("---")
+            notification_parts.append("**Censoring Report**")
+            notification_parts.extend(censoring_report_section)
+
     except Exception as e:
         logger.exception(f"Failed to build the extended notifications: {e}")
         notification_parts.append("**Artifact Links:** Error extracting links")
@@ -290,6 +298,77 @@ def _build_enhanced_notification(
     notification_parts.append("---")
 
     return "\n".join(notification_parts), notification_success
+
+
+def _get_censoring_report_section(artifact_dir: Path) -> list[str] | None:
+    """
+    Parse censoring_report.yaml if it exists and return notification section.
+
+    Returns:
+        List of notification lines or None if no report exists
+    """
+    if not artifact_dir:
+        return None
+
+    # Look for censoring_report.yaml at the top level of the step files
+    censoring_report_path = artifact_dir / "censoring_report.yaml"
+
+    if not censoring_report_path.exists():
+        return None
+
+    try:
+        with open(censoring_report_path) as f:
+            report_data = yaml.safe_load(f)
+
+        if not report_data:
+            return None
+
+        notification_lines = []
+
+        # Show number of files scanned
+        total_files = report_data.get("total_files", 0)
+        clean_files = report_data.get("clean_files", 0)
+        safe_censored_files = report_data.get("safe_censored_files", 0)
+        censored_files = report_data.get("censored_files", 0)  # Only unexpected now
+
+        notification_lines.append(f"📊 **Files scanned:** {total_files}")
+        notification_lines.append(
+            f"✅ Clean: {clean_files}, 🔒 Safe replacements: {safe_censored_files}"
+        )
+
+        # Show unexpected censoring issues if any
+        censored_by_reason = report_data.get("censored_by_reason", {})
+        if censored_files > 0 and censored_by_reason:
+            notification_lines.append(
+                f"⚠️ **Unexpected sensitive content:** {censored_files} file(s)"
+            )
+            notification_lines.append("")
+
+            for reason, files in censored_by_reason.items():
+                # Shorten long reasons for notification
+                short_reason = reason
+                if len(reason) > 60:
+                    short_reason = reason[:57] + "..."
+
+                file_count = len(files)
+                if file_count <= 3:
+                    # Show individual files for small counts
+                    file_list = ", ".join([f"`{f}`" for f in files])
+                    notification_lines.append(f"* {short_reason}: {file_list}")
+                else:
+                    # Show count for large lists
+                    first_files = ", ".join([f"`{f}`" for f in files[:2]])
+                    notification_lines.append(
+                        f"* {short_reason}: {first_files} and {file_count - 2} more"
+                    )
+        elif censored_files == 0:
+            notification_lines.append("✅ **No unexpected sensitive content found**")
+
+        return notification_lines
+
+    except Exception as e:
+        logger.warning(f"Failed to parse censoring report: {e}")
+        return [f"⚠️ **Censoring report parsing failed:** {e}"]
 
 
 def _get_execution_engine_config() -> str | None:
@@ -714,7 +793,7 @@ def _extract_postprocess_status_info(artifact_dir: Path) -> list[str]:
             else:
                 steps_str = f" {final_status}"
 
-            postprocess_info_lines.append(f"{overall_emoji} **{dir_name}**: {steps_str}")
+            postprocess_info_lines.append(f"* {overall_emoji} **{dir_name}**: {steps_str}")
 
         except Exception as e:
             postprocess_info_lines.append(f"**{postprocess_file.name}**: Error reading file - {e}")

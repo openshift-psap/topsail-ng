@@ -8,6 +8,7 @@ including GitHub notifications and Slack notifications via project providers.
 import logging
 import os
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +24,202 @@ from projects.core.notifications.provider import NotificationContext
 from projects.core.notifications.send import send_notification as send_github_notification
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class BackendResult:
+    """Result from a single backend export."""
+
+    success: bool = False
+    run_id: str | None = None
+    experiment_url: str | None = None
+    run_url: str | None = None
+    tracking_uri: str | None = None
+    detail: str | None = None
+    status: str | None = None
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "BackendResult":
+        """Create BackendResult from raw dict."""
+        return cls(
+            success=data.get("success", False),
+            run_id=data.get("run_id"),
+            experiment_url=data.get("experiment_url"),
+            run_url=data.get("run_url"),
+            tracking_uri=data.get("tracking_uri"),
+            detail=data.get("detail"),
+            status=data.get("status"),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dict."""
+        result = {"success": self.success}
+        if self.run_id is not None:
+            result["run_id"] = self.run_id
+        if self.experiment_url is not None:
+            result["experiment_url"] = self.experiment_url
+        if self.run_url is not None:
+            result["run_url"] = self.run_url
+        if self.tracking_uri is not None:
+            result["tracking_uri"] = self.tracking_uri
+        if self.detail is not None:
+            result["detail"] = self.detail
+        if self.status is not None:
+            result["status"] = self.status
+        return result
+
+
+@dataclass
+class CaliperArtifactsExport:
+    """Caliper artifacts export information."""
+
+    version: int = 1
+    backends: dict[str, BackendResult] | None = None
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "CaliperArtifactsExport":
+        """Create CaliperArtifactsExport from raw dict."""
+        backends_data = data.get("backends", {})
+        backends = {}
+        for backend_name, backend_data in backends_data.items():
+            if isinstance(backend_data, dict):
+                backends[backend_name] = BackendResult.from_dict(backend_data)
+            else:
+                backends[backend_name] = backend_data  # Keep non-dict values as-is
+
+        return cls(
+            version=data.get("version", 1),
+            backends=backends if backends else None,
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dict."""
+        result = {"version": self.version}
+        if self.backends:
+            backends_dict = {}
+            for backend_name, backend_result in self.backends.items():
+                if isinstance(backend_result, BackendResult):
+                    backends_dict[backend_name] = backend_result.to_dict()
+                else:
+                    backends_dict[backend_name] = backend_result
+            result["backends"] = backends_dict
+        return result
+
+
+@dataclass
+class TestPhase:
+    """Test execution phase information."""
+
+    phase: str
+    message: str = ""
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "TestPhase":
+        """Create TestPhase from raw dict."""
+        return cls(
+            phase=data.get("phase", "UNKNOWN"),
+            message=data.get("message", ""),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dict."""
+        return {
+            "phase": self.phase,
+            "message": self.message,
+        }
+
+
+@dataclass
+class JobShutdown:
+    """Job shutdown/abort information."""
+
+    is_aborted: bool = False
+    shutdown_value: str | None = None
+    shutdown_detected: bool = False
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "JobShutdown":
+        """Create JobShutdown from raw dict."""
+        return cls(
+            is_aborted=data.get("is_aborted", False),
+            shutdown_value=data.get("shutdown_value"),
+            shutdown_detected=data.get("shutdown_detected", False),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dict."""
+        result = {
+            "is_aborted": self.is_aborted,
+            "shutdown_detected": self.shutdown_detected,
+        }
+        if self.shutdown_value is not None:
+            result["shutdown_value"] = self.shutdown_value
+        return result
+
+
+@dataclass
+class ExportStatus:
+    """Dataclass for caliper export status."""
+
+    success: bool
+    final_status: str
+    censoring_occurred: bool = False
+    duration: str | None = None
+    caliper_artifacts_export: CaliperArtifactsExport | None = None
+    test_phase: TestPhase | None = None
+    job_shutdown: JobShutdown | None = None
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ExportStatus":
+        """Create ExportStatus from raw dict, providing proper defaults."""
+        # Extract success from various possible sources
+        success = data.get("success")
+        if success is None:
+            # Try to determine success from final_status
+            final_status = data.get("final_status", "")
+            success = final_status in ("success", "completed")
+
+        # Convert nested structures to typed objects
+        caliper_export = None
+        if data.get("caliper_artifacts_export"):
+            caliper_export = CaliperArtifactsExport.from_dict(data["caliper_artifacts_export"])
+
+        test_phase = None
+        if data.get("test_phase"):
+            test_phase = TestPhase.from_dict(data["test_phase"])
+
+        job_shutdown = None
+        if data.get("job_shutdown"):
+            job_shutdown = JobShutdown.from_dict(data["job_shutdown"])
+
+        return cls(
+            success=success,
+            final_status=data.get("final_status", "unknown"),
+            censoring_occurred=data.get("censoring_occurred", False),
+            duration=data.get("duration"),
+            caliper_artifacts_export=caliper_export,
+            test_phase=test_phase,
+            job_shutdown=job_shutdown,
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert back to dict for compatibility."""
+        result = {
+            "success": self.success,
+            "final_status": self.final_status,
+            "censoring_occurred": self.censoring_occurred,
+        }
+
+        if self.duration is not None:
+            result["duration"] = self.duration
+        if self.caliper_artifacts_export is not None:
+            result["caliper_artifacts_export"] = self.caliper_artifacts_export.to_dict()
+        if self.test_phase is not None:
+            result["test_phase"] = self.test_phase.to_dict()
+        if self.job_shutdown is not None:
+            result["job_shutdown"] = self.job_shutdown.to_dict()
+
+        return result
 
 
 def _censor_notification_text(text: str, verbose: bool = False) -> str:
@@ -50,7 +247,7 @@ def _censor_notification_text(text: str, verbose: bool = False) -> str:
 
 def send_notification(
     artifact_dir: Path | None,
-    status: dict[str, Any],
+    status: ExportStatus,
     notification_provider=None,
     dry_run: bool = False,
 ) -> bool:
@@ -58,7 +255,7 @@ def send_notification(
 
     Args:
         artifact_dir: Directory to browse to find the artifacts
-        status: Caliper export status object containing backend results and metadata
+        status: Caliper export status dataclass
         notification_provider: Optional per-project SlackNotificationProvider instance
         dry_run: If True, only build and log notification content without sending
 
@@ -139,7 +336,7 @@ def send_notification(
                 # Censor status fields before creating NotificationContext
                 try:
                     censored_status = yaml.safe_load(
-                        _censor_notification_text(yaml.dump(status), verbose=dry_run)
+                        _censor_notification_text(yaml.dump(status.to_dict()), verbose=dry_run)
                     )
                 except Exception as e:
                     logger.error(
@@ -204,22 +401,18 @@ def _get_project_and_args(project: str) -> tuple[str, str]:
     return fjob_project, fjob_args_str
 
 
-def _extract_finish_reason_from_status(status: dict[str, Any]) -> str:
+def _extract_finish_reason_from_status(status: ExportStatus) -> str:
     """Extract finish reason from status."""
-    logger.info(f"DEBUG: Raw status object keys: {list(status.keys())}")
-    logger.info(f"DEBUG: Raw status object: {status}")
-
-    success = status.get("success", False)
-    censoring_occurred = status.get("censoring_occurred", False)
+    logger.info(f"DEBUG: Export status object: {status}")
 
     logger.info(
-        f"DEBUG: Status analysis - success={success}, censoring_occurred={censoring_occurred}"
+        f"DEBUG: Status analysis - success={status.success}, censoring_occurred={status.censoring_occurred}"
     )
 
-    if not success:
-        logger.info(f"DEBUG: Finish reason: failed (success={success})")
+    if not status.success:
+        logger.info(f"DEBUG: Finish reason: failed (success={status.success})")
         return "failed"
-    elif censoring_occurred:
+    elif status.censoring_occurred:
         logger.info("DEBUG: Finish reason: completed with censoring")
         return "completed with censoring"
     else:
@@ -231,13 +424,13 @@ def _build_enhanced_notification(
     artifact_dir: Path,
     project: str,
     finish_reason: str,
-    status: dict[str, Any],
+    status: ExportStatus,
 ) -> tuple[str, bool]:
     """Build enhanced notification with fournos job config and artifact links."""
     fjob_project, fjob_args_str = _get_project_and_args(project)
 
-    success = status.get("success", False)
-    censoring_occurred = status.get("censoring_occurred", False)
+    success = status.success
+    censoring_occurred = status.censoring_occurred
 
     logger.info(
         f"Building notification - success={success}, censoring_occurred={censoring_occurred}, finish_reason='{finish_reason}'"
@@ -257,18 +450,18 @@ def _build_enhanced_notification(
     logger.info(f"DEBUG: Final status emoji: {status_emoji}")
 
     base_status = f"{status_emoji} **Execution of `{fjob_project}` {fjob_args_str}** {status_emoji}"
-    notification_parts = [base_status, ""]
+    notification_parts = [base_status, ]
 
     # Add job abort message right below overall status if applicable
-    shutdown_status = status.get("job_shutdown")
-    if shutdown_status and shutdown_status.get("is_aborted"):
-        notification_parts.append("---")
-        shutdown_value = shutdown_status.get("shutdown_value", "Stop")
+    shutdown_status = status.job_shutdown
+    if shutdown_status and shutdown_status.is_aborted:
+        notification_parts += ["", "---"]
+        shutdown_value = shutdown_status.shutdown_value or "Stop"
         notification_parts.append(f"🛑 **JOB ABORTED** - `spec.shutdown={shutdown_value}`")
-        notification_parts += ["", "---", ""]
 
     execution_engine_config = _get_execution_engine_config()
     if execution_engine_config:
+        notification_parts += ["", "---"]
         notification_parts.append("**Execution Engine Configuration**")
         notification_parts.append(execution_engine_config)
 
@@ -312,13 +505,11 @@ def _build_enhanced_notification(
 
     # Build notification sections
     if test_status_section:
-        notification_parts.append("")
-        notification_parts.append("---")
+        notification_parts += ["", "---"]
         notification_parts.extend(test_status_section)
 
     if artifact_links:
-        notification_parts.append("")
-        notification_parts.append("---")
+        notification_parts += ["", "---"]
         notification_parts.append("**Artifact Links**")
         notification_parts.extend([f"* {link}" for link in artifact_links])
     else:
@@ -328,25 +519,19 @@ def _build_enhanced_notification(
             notification_parts.append("**Artifact Links:** Error extracting links")
 
     if step_status:
-        notification_parts.append("")
-        notification_parts.append("---")
-        notification_parts.append("**Step details**")
+        notification_parts += ["", "---"]
+        notification_parts.append("**Pipeline Step Details**")
         for link in step_status:
             notification_parts.append(link)
 
     if postprocess_status_links:
-        notification_parts.append("")
-        notification_parts.append("---")
+        notification_parts += ["", "---"]
         notification_parts.extend(postprocess_status_links)
 
     if censoring_report_section:
-        notification_parts.append("")
-        notification_parts.append("---")
+        notification_parts += ["", "---"]
         notification_parts.append("**Censoring Report**")
         notification_parts.extend(censoring_report_section)
-
-    notification_parts.append("")
-    notification_parts.append("---")
 
     return "\n".join(notification_parts), notification_success
 
@@ -441,14 +626,14 @@ def _get_execution_engine_config() -> str | None:
     return None
 
 
-def _extract_test_status_section(status: dict[str, Any]) -> list[str] | None:
+def _extract_test_status_section(status: ExportStatus) -> list[str] | None:
     """Extract test status section from status."""
-    test_phase = status.get("test_phase")
+    test_phase = status.test_phase
     if not test_phase:
         return None
 
-    phase = test_phase.get("phase", "").upper()
-    message = test_phase.get("message", "")
+    phase = test_phase.phase.upper()
+    message = test_phase.message
     test_status_emoji = "✅" if phase == "PASSED" else "❌" if phase == "FAILED" else "⚠️"
 
     return [
@@ -664,33 +849,48 @@ def _get_postprocess_status_links(
     return step_log_links
 
 
-def _extract_artifact_links(status: dict[str, Any]) -> tuple[list[str], str | None]:
+def _extract_artifact_links(status: ExportStatus) -> tuple[list[str], str | None]:
     """Extract artifact links and MLflow URL from status."""
     artifact_links = []
     mlflow_run_url = None
 
-    caliper_export = status.get("caliper_artifacts_export", {})
-    backends = caliper_export.get("backends", {})
+    caliper_export = status.caliper_artifacts_export
+    if not caliper_export or not caliper_export.backends:
+        return artifact_links, mlflow_run_url
 
-    for backend_name, backend_result in backends.items():
-        if not isinstance(backend_result, dict):
-            continue
+    for backend_name, backend_result in caliper_export.backends.items():
+        if isinstance(backend_result, BackendResult):
+            # Use typed access for BackendResult objects
+            if backend_result.experiment_url:
+                artifact_links.append(
+                    f"[{backend_name} Experiment]({backend_result.experiment_url})"
+                )
 
-        if backend_result.get("experiment_url"):
-            artifact_links.append(
-                f"[{backend_name} Experiment]({backend_result['experiment_url']})"
-            )
+            if backend_result.run_url:
+                mlflow_run_url = backend_result.run_url
+                artifact_links.append(f"[{backend_name} Results]({mlflow_run_url})")
 
-        if backend_result.get("run_url"):
-            mlflow_run_url = backend_result["run_url"]
-            artifact_links.append(f"[{backend_name} Results]({mlflow_run_url})")
-        elif backend_result.get("artifact_url"):
-            artifact_links.append(f"[{backend_name} Artifacts]({backend_result['artifact_url']})")
-        elif backend_result.get("dashboard_url"):
-            artifact_links.append(f"[{backend_name} Dashboard]({backend_result['dashboard_url']})")
+        elif isinstance(backend_result, dict):
+            # Legacy support for dict-based backend results
+            if backend_result.get("experiment_url"):
+                artifact_links.append(
+                    f"[{backend_name} Experiment]({backend_result['experiment_url']})"
+                )
 
-    if status.get("artifact_url"):
-        artifact_links.append(f"[Artifacts]({status['artifact_url']})")
+            if backend_result.get("run_url"):
+                mlflow_run_url = backend_result["run_url"]
+                artifact_links.append(f"[{backend_name} Results]({mlflow_run_url})")
+            elif backend_result.get("artifact_url"):
+                artifact_links.append(
+                    f"[{backend_name} Artifacts]({backend_result['artifact_url']})"
+                )
+            elif backend_result.get("dashboard_url"):
+                artifact_links.append(
+                    f"[{backend_name} Dashboard]({backend_result['dashboard_url']})"
+                )
+
+    # Note: artifact_url is not part of the main export status
+    # This appears to be legacy code - removing for now
 
     return artifact_links, mlflow_run_url
 
@@ -1159,10 +1359,10 @@ def _process_step_status(artifact_dir: Path, mlflow_run_url: str) -> list[str]:
     return step_status
 
 
-def _extract_duration_from_status(status: dict[str, Any]) -> str:
+def _extract_duration_from_status(status: ExportStatus) -> str:
     """Extract duration from status object."""
     # Look for duration in status
-    duration = status.get("duration")
+    duration = status.duration
     if duration:
         return f" after {duration}"
     return ""

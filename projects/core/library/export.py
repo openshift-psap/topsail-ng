@@ -24,6 +24,10 @@ from projects.caliper.orchestration.postprocess import POSTPROCESS_STATUS_FILENA
 from projects.core.library import ci as ci_lib
 from projects.core.library import config, env, run
 from projects.core.library.export_notifications import (
+    BackendResult,
+    CaliperArtifactsExport,
+    ExportStatus,
+    TestPhase,
     _check_job_shutdown_status,
     _create_mlflow_file_url_for_step,
     send_notification,
@@ -38,7 +42,7 @@ class FinishReason(StrEnum):
     OTHER = "other"
 
 
-def _update_fjob_export_status(status: dict):
+def _update_fjob_export_status(status: ExportStatus):
     """Update FournosJob status with export artifacts status."""
     if not env.running_inside_fournos():
         return
@@ -75,7 +79,7 @@ def _update_fjob_export_status(status: dict):
             fjob_data["status"]["engineStatus"]["forge"]["status"] = {}
 
         # Update with export-artifacts status
-        fjob_data["status"]["engineStatus"]["forge"]["exportArtifacts"] = status
+        fjob_data["status"]["engineStatus"]["forge"]["exportArtifacts"] = status.to_dict()
 
         # Patch the fjob
         patch_data = {"status": fjob_data["status"]}
@@ -297,34 +301,35 @@ def caliper_export_entrypoint(
                 "DRY RUN: Skipping actual caliper export, creating mock status for notification"
             )
             # Create a realistic mock status for notification testing
-            status = {
-                "success": True,
-                "final_status": "success",
-                "backends": {},
-                "caliper_artifacts_export": {
-                    "backends": {
-                        "mlflow": {
-                            "success": True,
-                            "run_id": "dry-run-mock-id",
-                            "experiment_url": "http://DRY_RUN_MLFLOW_FAKE_URL/#/experiments/123",
-                            "run_url": "http://DRY_RUN_MLFLOW_FAKE_URL/#/experiments/123/runs/dry-run-mock-id/artifacts?workspace=forge-dry-run",
-                            "tracking_uri": "http://DRY_RUN_MLFLOW_FAKE_URL",
-                        }
-                    }
-                },
-                "duration": "15 minutes, 30 seconds",
-                "test_phase": {
-                    "phase": "FAILED",
-                    "message": "Test execution completed with failures",
-                },
-            }
+            status = ExportStatus(
+                success=True,
+                final_status="success",
+                censoring_occurred=False,
+                duration="15 minutes, 30 seconds",
+                caliper_artifacts_export=CaliperArtifactsExport(
+                    version=1,
+                    backends={
+                        "mlflow": BackendResult(
+                            success=True,
+                            run_id="dry-run-mock-id",
+                            experiment_url="http://DRY_RUN_MLFLOW_FAKE_URL/#/experiments/123",
+                            run_url="http://DRY_RUN_MLFLOW_FAKE_URL/#/experiments/123/runs/dry-run-mock-id/artifacts?workspace=forge-dry-run",
+                            tracking_uri="http://DRY_RUN_MLFLOW_FAKE_URL",
+                        )
+                    },
+                ),
+                test_phase=TestPhase(
+                    phase="FAILED",
+                    message="Test execution completed with failures",
+                ),
+            )
         else:
             status = run_caliper_orchestration_export(
                 artifact_dir=artifact_dir,
                 disable_censoring=disable_censoring,
                 disable_file_export=disable_file_export,
             )
-            logger.info("Export status:\n" + yaml.dump(status, indent=4))
+            logger.info("Export status:\n" + yaml.dump(status.to_dict(), indent=4))
 
             # Update fjob status with export results (only if file export is not disabled)
             if not disable_file_export:
@@ -336,12 +341,12 @@ def caliper_export_entrypoint(
         logger.exception(f"Export failed: {e}")
         export_failed = True
         # Create failure status for notification
-        status = {"success": False, "error": str(e), "backends": {}}
+        status = ExportStatus(success=False, final_status=f"failed: {e}")
     except Exception as e:
         logger.exception(f"Export failed with unexpected error: {e}")
         export_failed = True
         # Create failure status for notification
-        status = {"success": False, "error": str(e), "backends": {}}
+        status = ExportStatus(success=False, final_status=f"failed: {e}")
 
     finally:
         # Send completion notifications regardless of success/failure
@@ -374,22 +379,31 @@ def caliper_export_entrypoint(
         return 1, "failed"
 
     # Check if censoring occurred and return exit code 1 if so
-    if status and status.get("censoring_occurred", False):
+    if status and status.censoring_occurred:
         return 1, "censoring_occurred"
 
     return 0
 
 
-def _update_final_artifacts(artifact_dir, export_status: dict[str, Any] | None) -> None:
+def _update_final_artifacts(artifact_dir, export_status: ExportStatus | None) -> None:
     """Update the final artifacts (run.log, notifications) to MLflow after all post-export work is done."""
     if not export_status:
         logger.warning("No export status received, cannot update the final artifacts")
         return
 
     try:
-        caliper_export = export_status.get("caliper_artifacts_export", {})
-        backends = caliper_export.get("backends", {})
-        mlflow_meta = backends.get("mlflow")
+        caliper_export = export_status.caliper_artifacts_export
+        if not caliper_export or not caliper_export.backends:
+            logger.warning(
+                "Export status doesn't have caliper artifacts export data, cannot update the final artifacts"
+            )
+            return
+
+        mlflow_backend = caliper_export.backends.get("mlflow")
+        if isinstance(mlflow_backend, BackendResult):
+            mlflow_meta = mlflow_backend.to_dict()
+        else:
+            mlflow_meta = mlflow_backend
         if not isinstance(mlflow_meta, dict):
             logger.warning(
                 "Export status don't have the mlflow backend, cannot update the final artifacts"

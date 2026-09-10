@@ -36,6 +36,7 @@ from projects.caliper.orchestration.export_config import (
 from projects.core.library import env
 from projects.core.library import vault as vault_lib
 from projects.core.library.config import requires
+from projects.core.library.export_notifications import ExportStatus
 
 logger = logging.getLogger(__name__)
 
@@ -169,7 +170,7 @@ def run_from_orchestration_config(
     caliper_cfg: dict[str, Any] | None,
     disable_censoring: bool = False,
     disable_file_export: bool = False,
-) -> int:
+) -> ExportStatus:
     """
     Run Caliper file export from orchestration config.
 
@@ -318,11 +319,14 @@ def run_from_orchestration_config(
                 raise ExportFailedException(f"Artifacts export failed (ret code = {ret})")
 
     with open(status_yaml) as f:
-        status = yaml.safe_load(f.read())
+        status_dict = yaml.safe_load(f.read())
+
+    # Create ExportStatus from loaded data
+    status = ExportStatus.from_dict(status_dict)
 
     # Add censoring information to status
     if len(run_dirs) == 1:
-        status["censoring_occurred"] = censoring_occurred
+        status.censoring_occurred = censoring_occurred
 
     return status
 

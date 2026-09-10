@@ -240,19 +240,19 @@ def _build_enhanced_notification(
     censoring_occurred = status.get("censoring_occurred", False)
 
     logger.info(
-        f"DEBUG: Building notification - success={success}, censoring_occurred={censoring_occurred}, finish_reason='{finish_reason}'"
+        f"Building notification - success={success}, censoring_occurred={censoring_occurred}, finish_reason='{finish_reason}'"
     )
 
     status_emoji = "✅" if success else "❌"
-    logger.info(f"DEBUG: Initial emoji based on success: {status_emoji}")
+    logger.info(f"Initial emoji based on success: {status_emoji}")
 
     if censoring_occurred:
         status_emoji = "⚠️"
-        logger.info(f"DEBUG: Changed emoji to warning due to censoring: {status_emoji}")
+        logger.info(f"Changed emoji to warning due to censoring: {status_emoji}")
 
     if finish_reason == "failed":
         status_emoji = "❌"
-        logger.info(f"DEBUG: Changed emoji to failed due to finish_reason: {status_emoji}")
+        logger.info(f"Changed emoji to failed due to finish_reason: {status_emoji}")
 
     logger.info(f"DEBUG: Final status emoji: {status_emoji}")
 
@@ -337,7 +337,6 @@ def _build_enhanced_notification(
     if postprocess_status_links:
         notification_parts.append("")
         notification_parts.append("---")
-        notification_parts.append("**Post-processing Status** ✅")
         notification_parts.extend(postprocess_status_links)
 
     if censoring_report_section:
@@ -598,13 +597,10 @@ def _get_postprocess_status_links(
         try:
             # Search for postprocess status files recursively within this step directory
             step_postprocess_files = list(step_dir.glob(f"**/{POSTPROCESS_STATUS_FILENAME}"))
-            logger.info(
-                f"DEBUG: Postprocess status - {step_name}: found {len(step_postprocess_files)} files: {step_postprocess_files}"
-            )
 
             if not step_postprocess_files:
                 logger.info(
-                    f"DEBUG: Postprocess status - {step_name}: no {POSTPROCESS_STATUS_FILENAME} files found"
+                    f"Postprocess status - {step_name}: no {POSTPROCESS_STATUS_FILENAME} files found"
                 )
                 continue
 
@@ -615,37 +611,25 @@ def _get_postprocess_status_links(
             )
 
             # Process ALL postprocess status files found
-            for file_index, postprocess_status_file in enumerate(step_postprocess_files):
-                logger.info(
-                    f"DEBUG: Postprocess status - {step_name}: processing file {file_index + 1}/{len(step_postprocess_files)}: {postprocess_status_file}"
-                )
-
+            for postprocess_status_file in step_postprocess_files:
                 with open(postprocess_status_file, encoding="utf-8") as f:
                     status_data = yaml.safe_load(f.read())
 
                 if not status_data:
-                    logger.info(
-                        f"DEBUG: Postprocess status - {step_name}: file {file_index + 1} status_data is empty, skipping"
+                    logger.warning(
+                        f"Postprocess status - {postprocess_status_file} status_data is empty, skipping"
                     )
                     continue
 
-                logger.info(
-                    f"DEBUG: Postprocess status - {step_name}: file {file_index + 1} loaded status_data successfully"
-                )
-
-                # Parse postprocess result
-                logger.info(
-                    f"DEBUG: Postprocess status - {step_name}: file {file_index + 1} parsing status_data..."
-                )
                 result = parse_postprocess_status(status_data)
                 if not result:
-                    logger.info(
-                        f"DEBUG: Postprocess status - {step_name}: file {file_index + 1} parse_postprocess_status returned None/empty"
+                    logger.warning(
+                        f"Postprocess status - {postprocess_status_file} parse_postprocess_status returned None/empty"
                     )
                     continue
 
                 logger.info(
-                    f"DEBUG: Postprocess status - {step_name}: file {file_index + 1} parsed result successfully"
+                    f"Postprocess status - {postprocess_status_file} parsed result successfully"
                 )
 
                 # Create file link function for this step
@@ -661,25 +645,22 @@ def _get_postprocess_status_links(
 
                 # Generate notification text from the structured result
                 logger.info(
-                    f"DEBUG: Postprocess status - {step_name}: file {file_index + 1} generating notification text..."
+                    f"Postprocess status - {postprocess_status_file} generating notification text..."
                 )
                 notification_text = format_postprocess_status_notification(result, get_file_link)
                 if notification_text:
                     logger.info(
-                        f"DEBUG: Postprocess status - {step_name}: file {file_index + 1} notification text generated, adding to list"
+                        f"Postprocess status - {postprocess_status_file} notification text generated, adding to list"
                     )
                     step_log_links.append(notification_text)
                 else:
                     logger.info(
-                        f"DEBUG: Postprocess status - {step_name}: file {file_index + 1} notification text is empty"
+                        f"Postprocess status - {postprocess_status_file} notification text is empty"
                     )
 
         except Exception as e:
             logger.exception(f"Failed to process postprocess status for {step_name}: {e}")
 
-    logger.info(
-        f"DEBUG: Postprocess status - returning {len(step_log_links)} postprocess status links"
-    )
     return step_log_links
 
 

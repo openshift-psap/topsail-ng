@@ -18,6 +18,8 @@ from projects.core.ci_entrypoint.prepare_ci import CI_METADATA_DIRNAME
 from projects.core.library import ci as ci_lib
 from projects.core.library import config, env
 from projects.core.library.step_status import StepStatus
+from projects.core.notifications.provider import NotificationContext
+from projects.core.notifications.send import send_notification as send_github_notification
 
 logger = logging.getLogger(__name__)
 
@@ -102,8 +104,6 @@ def send_notification(
 
     # Actually send notification through GitHub API
     try:
-        from projects.core.notifications.send import send_notification as send_github_notification
-
         # Get notification vault from configuration
         notification_vault = None
         try:
@@ -134,8 +134,6 @@ def send_notification(
     if notification_provider:
         if not dry_run:
             try:
-                from projects.core.notifications.provider import NotificationContext
-
                 artifact_dir = Path(env.ARTIFACT_DIR) if env.ARTIFACT_DIR else None
                 # Censor status fields before creating NotificationContext
                 try:
@@ -551,10 +549,10 @@ def _get_postprocess_status_links(
                 shutdown_status = status_data["job_shutdown"]
                 status_data["job_shutdown"] = shutdown_status
 
-            # Import notification functions from caliper
+            # Import notification functions from caliper (inside function to avoid circular imports)
             from projects.caliper.orchestration.notification import (
                 format_postprocess_status_notification,
-                parse_postprocess_result,
+                parse_postprocess_status,
             )
 
             # Parse postprocess result
@@ -827,8 +825,6 @@ def _process_step_details(step_dir: Path, mlflow_run_url: str | None = None) -> 
 def _check_job_shutdown_status() -> dict[str, Any] | None:
     """Check if the job has been aborted via spec.shutdown field."""
     try:
-        from projects.core.library import ci as ci_lib
-
         metadata_dir = ci_lib.get_ci_metadata_dir()
         fournos_fjob_path = metadata_dir / "fournos_fjob.yaml"
         if not fournos_fjob_path.exists():
@@ -855,7 +851,6 @@ def _read_step_exit_status(
     step_dir: Path, current_step_name: str | None = None
 ) -> tuple[str, StepStatus]:
     """Read exit status from step directory and return emoji and status enum."""
-    from projects.core.ci_entrypoint.prepare_ci import CI_METADATA_DIRNAME
 
     try:
         exit_status_file = step_dir / CI_METADATA_DIRNAME / "exit_status.yaml"
@@ -914,8 +909,6 @@ def _check_postprocess_warnings(step_dir: Path) -> StepStatus:
 
 def _get_overall_status_from_steps(artifact_dir: Path) -> str:
     """Check all step exit statuses and return overall status emoji."""
-    from projects.core.library import env
-    from projects.core.library.export import StepStatus
 
     try:
         current_step_name = Path(env.BASE_ARTIFACT_DIR).name
@@ -1010,7 +1003,6 @@ def _create_mlflow_step_url(mlflow_run_url: str, step_dir_name: str) -> str | No
 
 def _read_step_duration(step_dir: Path) -> str:
     """Read step duration from timing file."""
-    from projects.core.ci_entrypoint.prepare_ci import CI_METADATA_DIRNAME
 
     timing_file = step_dir / CI_METADATA_DIRNAME / "test_duration.yaml"
     if not timing_file.exists():
@@ -1029,7 +1021,6 @@ def _read_step_duration(step_dir: Path) -> str:
 
 def _process_step_status(artifact_dir: Path, mlflow_run_url: str) -> list[str]:
     """Process step logs from parent directory."""
-    from projects.core.library import env
 
     if not mlflow_run_url:
         logging.warning("mlflow_run_url not set. Will generate dummy links.")

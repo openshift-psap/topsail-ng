@@ -39,6 +39,7 @@ class BackendResult:
     tracking_uri: str | None = None
     detail: str | None = None
     status: str | None = None
+    child_runs: list[dict[str, str]] | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "BackendResult":
@@ -57,6 +58,7 @@ class BackendResult:
             tracking_uri=data.get("tracking_uri"),
             detail=data.get("detail"),
             status=data.get("status"),
+            child_runs=data.get("child_runs"),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -74,6 +76,8 @@ class BackendResult:
             result["detail"] = self.detail
         if self.status is not None:
             result["status"] = self.status
+        if self.child_runs is not None:
+            result["child_runs"] = self.child_runs
         return result
 
 
@@ -90,10 +94,7 @@ class CaliperArtifactsExport:
         backends_data = data.get("backends", {})
         backends = {}
         for backend_name, backend_data in backends_data.items():
-            if isinstance(backend_data, dict):
-                backends[backend_name] = BackendResult.from_dict(backend_data)
-            else:
-                backends[backend_name] = backend_data  # Keep non-dict values as-is
+            backends[backend_name] = BackendResult.from_dict(backend_data)
 
         return cls(
             version=data.get("version", 1),
@@ -106,10 +107,7 @@ class CaliperArtifactsExport:
         if self.backends:
             backends_dict = {}
             for backend_name, backend_result in self.backends.items():
-                if isinstance(backend_result, BackendResult):
-                    backends_dict[backend_name] = backend_result.to_dict()
-                else:
-                    backends_dict[backend_name] = backend_result
+                backends_dict[backend_name] = backend_result.to_dict()
             result["backends"] = backends_dict
         return result
 
@@ -207,12 +205,7 @@ class ExportStatus:
                 # Infer success from backend results if no explicit status
                 backend_successes = []
                 for backend_result in caliper_export.backends.values():
-                    if isinstance(backend_result, BackendResult):
-                        backend_successes.append(backend_result.success)
-                    elif isinstance(backend_result, dict):
-                        # Handle raw dict backends (shouldn't happen after conversion)
-                        backend_status = backend_result.get("status", "")
-                        backend_successes.append(backend_status == "success")
+                    backend_successes.append(backend_result.success)
 
                 # Overall success if all backends succeeded
                 success = all(backend_successes) if backend_successes else False
@@ -429,7 +422,7 @@ def _get_project_and_args(project: str) -> tuple[str, str]:
         logger.warning(f"Failed to read fournos job for project/args: {e}")
 
     if fjob_args_str:
-        fjob_args_str = f"with `{fjob_args_str}`"
+        fjob_args_str = f" | `{fjob_args_str}`"
 
     return fjob_project, fjob_args_str
 
@@ -543,13 +536,13 @@ def _build_enhanced_notification(
 
     if artifact_links:
         notification_parts += ["", "---"]
-        notification_parts.append("**Artifact Links**")
-        notification_parts.extend([f"* {link}" for link in artifact_links])
+        notification_parts.append("**MLFlow links**")
+        notification_parts.extend(artifact_links)
     else:
         if notification_success:
-            notification_parts.append("**Artifact Links:** No direct links available")
+            notification_parts.append("**MLFlow links:** No direct links available")
         else:
-            notification_parts.append("**Artifact Links:** Error extracting links")
+            notification_parts.append("**MLFlow links:** Error extracting links")
 
     if step_status:
         notification_parts += ["", "---"]
@@ -902,38 +895,23 @@ def _extract_artifact_links(status: ExportStatus) -> tuple[list[str], str | None
         return artifact_links, mlflow_run_url
 
     for backend_name, backend_result in caliper_export.backends.items():
-        if isinstance(backend_result, BackendResult):
-            # Use typed access for BackendResult objects
-            if backend_result.experiment_url:
-                artifact_links.append(
-                    f"[{backend_name} Experiment]({backend_result.experiment_url})"
-                )
+        if not isinstance(backend_result, BackendResult):
+            continue
+        # Use typed access for BackendResult objects
 
-            if backend_result.run_url:
-                mlflow_run_url = backend_result.run_url
-                artifact_links.append(f"[{backend_name} Results]({mlflow_run_url})")
+        if backend_result.run_url:
+            mlflow_run_url = backend_result.run_url
+            artifact_links.append(f"* [{backend_name} results]({mlflow_run_url})")
 
-        elif isinstance(backend_result, dict):
-            # Legacy support for dict-based backend results
-            if backend_result.get("experiment_url"):
-                artifact_links.append(
-                    f"[{backend_name} Experiment]({backend_result['experiment_url']})"
-                )
+        # Add child runs if they exist
+        if not backend_result.child_runs:
+            continue
 
-            if backend_result.get("run_url"):
-                mlflow_run_url = backend_result["run_url"]
-                artifact_links.append(f"[{backend_name} Results]({mlflow_run_url})")
-            elif backend_result.get("artifact_url"):
-                artifact_links.append(
-                    f"[{backend_name} Artifacts]({backend_result['artifact_url']})"
-                )
-            elif backend_result.get("dashboard_url"):
-                artifact_links.append(
-                    f"[{backend_name} Dashboard]({backend_result['dashboard_url']})"
-                )
-
-    # Note: artifact_url is not part of the main export status
-    # This appears to be legacy code - removing for now
+        for child_run in backend_result.child_runs:
+            run_name = child_run.get("run_name")
+            run_url = child_run.get("run_url")
+            if run_name and run_url:
+                artifact_links.append(f"  * nested run [{run_name}]({run_url})")
 
     return artifact_links, mlflow_run_url
 
@@ -1554,7 +1532,7 @@ def _format_censoring_report_info_for_step(step_dir: Path, get_file_link: Any) -
         if get_file_link:
             try:
                 report_link = get_file_link(censoring_report_path)
-                first_line = "[📊 {total_files} files scanned]({report_link})"
+                first_line = f"[📊 {total_files} files scanned]({report_link})"
             except Exception as e:
                 logger.warning(
                     f"Failed to create link for censoring report {censoring_report_path}: {e}"

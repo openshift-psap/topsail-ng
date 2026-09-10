@@ -31,23 +31,13 @@ benchmarks:
 
   concurrent-1k-1k:
     timeout_seconds: 3600
-    args:
-      backend_type: openai_http
-      rate_type: concurrent
-      rate: [1, 50, 100, 200, 300]
-      data: prompt_tokens=1000,output_tokens=1000
-      max_seconds: 600
+    benchconf: llm-d/concurrent-1k-1k
 
   heavy-heterogeneous:
     timeout_seconds: 3600
     vllm_args:
       max_model_len: 40960
-    args:
-      backend_type: openai_http
-      rate_type: concurrent
-      rate: [1, 50, 100, 200, 300]
-      data: prompt_tokens=8000,prompt_tokens_stdev=8500,prompt_tokens_min=50,prompt_tokens_max=30000,output_tokens=800,output_tokens_stdev=1500,output_tokens_min=20,output_tokens_max=8000
-      max_seconds: 600
+    benchconf: llm-d/concurrent-heavy-heterogeneous
 
   multi-turn:
     vllm_args:
@@ -55,6 +45,8 @@ benchmarks:
     # One Job runs all five rates sequentially; the high-rate cases need more
     # than the default one-hour wall-clock budget.
     timeout_seconds: 7200
+    # Uses inline args instead of benchconf because prefix_count and
+    # max_requests scale with the rate via forge's {rate} expressions.
     args:
       backend_type: openai_http
       rate_type: concurrent

@@ -107,10 +107,8 @@ def test_benchmark_workloads_are_available() -> None:
         assert benchmark["timeout_seconds"] == 3600
     assert multi_turn["timeout_seconds"] == 7200
 
-    assert concurrent["args"]["rate"] == [1, 50, 100, 200, 300]
-    assert heavy["args"]["max_seconds"] == 600
-    assert "prompt_tokens_stdev=8500" in heavy["args"]["data"]
-    assert "output_tokens_max=8000" in heavy["args"]["data"]
+    assert concurrent["benchconf"] == "llm-d/concurrent-1k-1k"
+    assert heavy["benchconf"] == "llm-d/concurrent-heavy-heterogeneous"
     assert multi_turn["args"]["rate"] == [32, 64, 128, 256, 512]
     assert "turns=5" in multi_turn["args"]["data"]
     assert "prefix_count={2*rate}" in multi_turn["args"]["data"]
@@ -152,10 +150,16 @@ def test_guidellm_benchmark_uses_original_model_name_as_processor(
         captured.update(kwargs)
         return 0
 
+    mock_config_path = Path("/mock/benchconf/config.yaml")
     monkeypatch.setattr(test_phase.run_guidellm_benchmark_command, "run", _fake_run)
+    monkeypatch.setattr(
+        test_phase.benchconf_lib, "resolve_config_path", lambda ref: mock_config_path
+    )
+    monkeypatch.setattr(test_phase.benchconf_lib, "_is_enabled", lambda: True)
     test_phase.run_guidellm_benchmark(endpoint_url="https://example.test/llm-d")
 
     assert captured["timeout"] == 3600
+    assert captured["config_path"] == mock_config_path
     guidellm_args = captured["guidellm_args"]
     assert isinstance(guidellm_args, list)
     assert "--processor=openai/gpt-oss-120b" in guidellm_args

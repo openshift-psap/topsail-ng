@@ -87,6 +87,9 @@ agentic_review = [
     "langchain-openai",
     "langchain-core",
 ]
+benchconf = [
+    "benchconf @ git+https://github.com/openshift-psap/benchconf@main",
+]
 
 [project.scripts]
 caliper = "projects.caliper.cli.main:run_cli"

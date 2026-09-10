@@ -1,0 +1,32 @@
+enabled: true
+step_seconds: 15
+query_keys:
+  # Dynamo frontend
+  - dynamo_requests_total
+  - dynamo_request_rate
+  - dynamo_input_token_rate
+  - dynamo_output_token_rate
+  - dynamo_queued_requests
+  - dynamo_ttft_avg
+  - dynamo_itl_avg
+  - dynamo_request_duration_avg
+  - dynamo_avg_input_tokens_per_request
+  - dynamo_avg_output_tokens_per_request
+  # Dynamo component
+  - dynamo_component_request_rate
+  - dynamo_component_request_duration_avg
+  - dynamo_gpu_cache_usage_percent
+  - dynamo_total_blocks
+  # Dynamo operator
+  - dynamo_operator_reconcile_rate
+  - dynamo_operator_reconcile_errors
+  # Infrastructure
+  - gpu_utilization
+  - gpu_memory_used
+  - gpu_memory_free
+  - gpu_power
+  - cpu_usage
+  - memory_usage
+  - network_rx_bytes
+  - network_tx_bytes
+  - container_restarts

@@ -1,0 +1,14 @@
+apiVersion: nvidia.com/v1alpha1
+kind: DynamoGraphDeployment
+metadata:
+  name: ""
+  namespace: ""
+  labels:
+    app.kubernetes.io/managed-by: forge
+    forge.openshift.io/project: dynamo
+spec:
+  backendFramework: vllm
+  pvcs:
+    - name: model-cache
+      create: false
+  services: {}

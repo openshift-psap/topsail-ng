@@ -310,3 +310,155 @@ queries:
     promql: DCGM_FI_DEV_GPU_TEMP
     unit: celsius
     description: GPU temperature
+
+  # ── Dynamo Frontend ─────────────────────────────────────────────────
+
+  dynamo_requests_total:
+    category: dynamo_frontend
+    promql: dynamo_frontend_requests_total{namespace=~"{ns}"}
+    unit: count
+    description: Total requests handled by Dynamo frontend
+
+  dynamo_request_rate:
+    category: dynamo_frontend
+    promql: >-
+      sum(rate(dynamo_frontend_requests_total
+      {namespace=~"{ns}"}[5m]))
+    unit: req/s
+    description: Dynamo frontend request rate
+
+  dynamo_input_token_rate:
+    category: dynamo_frontend
+    promql: >-
+      sum(rate(dynamo_frontend_input_sequence_tokens_sum
+      {namespace=~"{ns}"}[5m]))
+    unit: tokens/s
+    description: Dynamo frontend input token throughput
+
+  dynamo_output_token_rate:
+    category: dynamo_frontend
+    promql: >-
+      sum(rate(dynamo_frontend_output_sequence_tokens_sum
+      {namespace=~"{ns}"}[5m]))
+    unit: tokens/s
+    description: Dynamo frontend output token throughput
+
+  dynamo_queued_requests:
+    category: dynamo_frontend
+    promql: dynamo_frontend_queued_requests{namespace=~"{ns}"}
+    unit: count
+    description: Requests queued in Dynamo frontend
+
+  dynamo_ttft_avg:
+    category: dynamo_frontend
+    promql: >-
+      rate(dynamo_frontend_time_to_first_token_seconds_sum
+      {namespace=~"{ns}"}[5m])
+      / clamp_min(rate(dynamo_frontend_time_to_first_token_seconds_count
+      {namespace=~"{ns}"}[5m]), 1)
+    unit: seconds
+    description: Dynamo average time to first token
+
+  dynamo_itl_avg:
+    category: dynamo_frontend
+    promql: >-
+      rate(dynamo_frontend_inter_token_latency_seconds_sum
+      {namespace=~"{ns}"}[5m])
+      / clamp_min(rate(dynamo_frontend_inter_token_latency_seconds_count
+      {namespace=~"{ns}"}[5m]), 1)
+    unit: seconds
+    description: Dynamo average inter-token latency
+
+  dynamo_request_duration_avg:
+    category: dynamo_frontend
+    promql: >-
+      rate(dynamo_frontend_request_duration_seconds_sum
+      {namespace=~"{ns}"}[5m])
+      / clamp_min(rate(dynamo_frontend_request_duration_seconds_count
+      {namespace=~"{ns}"}[5m]), 1)
+    unit: seconds
+    description: Dynamo average request duration
+
+  dynamo_avg_input_tokens_per_request:
+    category: dynamo_frontend
+    promql: >-
+      rate(dynamo_frontend_input_sequence_tokens_sum
+      {namespace=~"{ns}"}[5m])
+      / clamp_min(rate(dynamo_frontend_input_sequence_tokens_count
+      {namespace=~"{ns}"}[5m]), 1)
+    unit: tokens
+    description: Average input tokens per request
+
+  dynamo_avg_output_tokens_per_request:
+    category: dynamo_frontend
+    promql: >-
+      rate(dynamo_frontend_output_sequence_tokens_sum
+      {namespace=~"{ns}"}[5m])
+      / clamp_min(rate(dynamo_frontend_output_sequence_tokens_count
+      {namespace=~"{ns}"}[5m]), 1)
+    unit: tokens
+    description: Average output tokens per request
+
+  # ── Dynamo Component ────────────────────────────────────────────────
+
+  dynamo_component_request_rate:
+    category: dynamo_component
+    promql: >-
+      sum by (dynamo_component) (rate(dynamo_component_requests_total
+      {namespace=~"{ns}"}[5m]))
+    unit: req/s
+    description: Request rate per Dynamo component
+
+  dynamo_component_request_duration_avg:
+    category: dynamo_component
+    promql: >-
+      sum by (dynamo_component) (
+        rate(dynamo_component_request_duration_seconds_sum
+        {namespace=~"{ns}"}[5m])
+        / clamp_min(rate(dynamo_component_request_duration_seconds_count
+        {namespace=~"{ns}"}[5m]), 1)
+      )
+    unit: seconds
+    description: Average request duration per Dynamo component
+
+  dynamo_component_request_bytes_rate:
+    category: dynamo_component
+    promql: >-
+      sum by (dynamo_component) (rate(dynamo_component_request_bytes_total
+      {namespace=~"{ns}"}[5m]))
+    unit: bytes/s
+    description: Request bytes throughput per Dynamo component
+
+  dynamo_component_response_bytes_rate:
+    category: dynamo_component
+    promql: >-
+      sum by (dynamo_component) (rate(dynamo_component_response_bytes_total
+      {namespace=~"{ns}"}[5m]))
+    unit: bytes/s
+    description: Response bytes throughput per Dynamo component
+
+  dynamo_gpu_cache_usage_percent:
+    category: dynamo_component
+    promql: dynamo_component_gpu_cache_usage_percent{namespace=~"{ns}"}
+    unit: percent
+    description: Dynamo GPU KV cache usage percentage
+
+  dynamo_total_blocks:
+    category: dynamo_component
+    promql: dynamo_component_total_blocks{namespace=~"{ns}"}
+    unit: count
+    description: Dynamo total KV cache blocks
+
+  # ── Dynamo Operator ─────────────────────────────────────────────────
+
+  dynamo_operator_reconcile_rate:
+    category: dynamo_operator
+    promql: sum(rate(dynamo_operator_reconcile_total[5m]))
+    unit: ops/s
+    description: Dynamo operator reconciliation rate
+
+  dynamo_operator_reconcile_errors:
+    category: dynamo_operator
+    promql: sum(rate(dynamo_operator_reconcile_errors_total[5m]))
+    unit: errors/s
+    description: Dynamo operator reconciliation error rate

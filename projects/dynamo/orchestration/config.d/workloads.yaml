@@ -1,0 +1,81 @@
+smoke_requests:
+  default:
+    prompt: San Francisco is a
+    max_tokens: 50
+    temperature: 0.7
+
+guidellm_benchmarks:
+  short:
+    job_name: guidellm-benchmark
+    image: ghcr.io/vllm-project/guidellm:v0.5.4
+    pvc_size: 1Gi
+    timeout_seconds: 900
+    outputs: json
+    args:
+      backend_type: openai_http
+      rate: 1
+      rate_type: concurrent
+      max_seconds: 120
+      sample_requests: 20
+      data: prompt_tokens=256,output_tokens=128
+
+  concurrent-1k-1k:
+    job_name: guidellm-benchmark
+    image: ghcr.io/vllm-project/guidellm:v0.5.4
+    pvc_size: 1Gi
+    timeout_seconds: 3600
+    args:
+      backend_type: openai_http
+      rate_type: concurrent
+      rate: [300, 200, 100, 50, 1]
+      data: prompt_tokens=1000,output_tokens=1000
+      max_seconds: 600
+
+  multi-turn:
+    job_name: guidellm-benchmark
+    image: ghcr.io/vllm-project/guidellm:v0.5.4
+    pvc_size: 1Gi
+    timeout_seconds: 3600
+    args:
+      backend_type: openai_http
+      rate_type: concurrent
+      rate: [32, 64, 128, 256, 512]
+      data: prompt_tokens=128,output_tokens=128,turns=5,prefix_tokens=10000,prefix_count={2*rate}
+      max_requests: "{10*rate}"
+
+aiperf_benchmarks:
+  mooncake-trace-2k:
+    timeout_seconds: 7200
+    dataset_url: https://raw.githubusercontent.com/kvcache-ai/Mooncake/refs/heads/main/FAST25-release/traces/conversation_trace.jsonl
+    dataset_type: mooncake_trace
+    dataset_cap: 2000
+    endpoint_type: chat
+    endpoint_path: /v1/chat/completions
+    streaming: true
+    fixed_schedule: true
+    fixed_schedule_auto_offset: true
+    synthesis_max_isl: 131072
+
+  mooncake-trace-full:
+    timeout_seconds: 14400
+    dataset_url: https://raw.githubusercontent.com/kvcache-ai/Mooncake/refs/heads/main/FAST25-release/traces/conversation_trace.jsonl
+    dataset_type: mooncake_trace
+    dataset_cap: null
+    endpoint_type: chat
+    endpoint_path: /v1/chat/completions
+    streaming: true
+    fixed_schedule: true
+    fixed_schedule_auto_offset: true
+    synthesis_max_isl: 131072
+
+  mooncake-toolagent:
+    timeout_seconds: 7200
+    dataset_url: https://raw.githubusercontent.com/kvcache-ai/Mooncake/refs/heads/main/FAST25-release/traces/tool_agent_trace.jsonl
+    dataset_type: mooncake_trace
+    dataset_cap: 2000
+    endpoint_type: chat
+    endpoint_path: /v1/chat/completions
+    streaming: true
+    fixed_schedule: true
+    fixed_schedule_auto_offset: true
+    synthesis_max_isl: 131072

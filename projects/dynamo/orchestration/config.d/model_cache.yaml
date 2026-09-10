@@ -1,0 +1,20 @@
+enabled: true
+marker_filename: .forge-model-cache.json
+pvc_name: dynamo-model-cache
+
+pvc:
+  name_prefix: dynamo-model
+  size: 15Gi
+  access_mode: ReadWriteOnce
+  storage_class_name: null
+  model_directory_name: model
+
+download:
+  wait_timeout_seconds: 7200
+  poll_interval_seconds: 15
+  pod_image_pull_policy: IfNotPresent
+
+hf:
+  downloader_image: registry.access.redhat.com/ubi9/python-311
+  token_secret_name: null
+  token_secret_key: token

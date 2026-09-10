@@ -1,0 +1,27 @@
+caliper:
+  postprocess:
+    enabled: false
+  export:
+    from: null
+    verbose: true
+    dry_run: false
+    backend:
+      mlflow:
+        enabled: true
+        secrets:
+          vault:
+            name: psap-forge-mlflow-export
+            mlflow_secret: mlflow-secret.yaml
+        config:
+          experiment: forge-dynamo
+          workspace: forge-dynamo
+          run_name:
+          description: >
+            Caliper export from FORGE Dynamo project
+          source_script: dynamo project
+          tags: {}
+          parameters: {}
+          metrics: {}
+    notifications:
+      enabled: true
+      vault: psap-forge-notifications

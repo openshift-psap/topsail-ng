@@ -1,0 +1,8 @@
+selected_preset: null
+model_name: Qwen/Qwen3-0.6B
+deployment_profile: aggregated
+smoke_request_key: default
+benchmark_tool: null
+benchmark_key: null
+job_name: null
+namespace_override: null

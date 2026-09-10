@@ -1,0 +1,71 @@
+defaults:
+  backend_framework: vllm
+  replicas: 1
+  tensor_parallelism: 1
+  serving_mode: aggregated
+  router_mode: direct
+  runtime_image: nvcr.io/nvidia/ai-dynamo/vllm-runtime:1.2.1
+  frontend_image: nvcr.io/nvidia/ai-dynamo/dynamo-frontend:1.2.1
+  hf_home: /opt/models
+  use_dra_resources: false
+  dra_resource_name: dra.llm-d.io/gpu-nic-pair
+  kv_transfer_config: null
+  kvbm_cpu_cache_gb: null
+  kv_block_size: "16"
+  frontend_cpu: "4"
+  router_args: []
+  vllm_args:
+    - --gpu-memory-utilization=0.90
+    - --enable-prefix-caching
+    - --block-size=16
+  env:
+    DYN_STORE_KV: mem
+    DYN_DECODE_FALLBACK: "true"
+
+aggregated:
+  serving_mode: aggregated
+
+aggregated-kv-router:
+  serving_mode: aggregated
+  router_mode: kv
+  router_args:
+    - --active-decode-blocks-threshold
+    - None
+    - --active-prefill-tokens-threshold
+    - None
+
+aggregated-kvbm:
+  serving_mode: aggregated
+  router_mode: kv
+  kvbm_cpu_cache_gb: 100
+  kv_transfer_config: '{"kv_connector":"DynamoConnector","kv_role":"kv_both"}'
+
+aggregated-dra:
+  serving_mode: aggregated
+  use_dra_resources: true
+
+aggregated-rr-4r-tp2:
+  serving_mode: aggregated
+  router_mode: round-robin
+  replicas: 4
+  tensor_parallelism: 2
+  runtime_image: nvcr.io/nvidia/ai-dynamo/vllm-runtime:1.1.1
+  frontend_image: nvcr.io/nvidia/ai-dynamo/dynamo-frontend:1.1.1
+  hf_home: /home/dynamo/.cache/huggingface
+  kv_block_size: "64"
+  frontend_cpu: "4"
+  vllm_args:
+    - --gpu-memory-utilization=0.90
+    - --async-scheduling
+    - --block-size=64
+    - --max-model-len=131072
+    - "--hf-overrides={\"rope_scaling\":{\"rope_type\":\"yarn\",\"factor\":4.0,\"original_max_position_embeddings\":32768},\"max_position_embeddings\":131072}"
+    - --no-enable-log-requests
+  env:
+    DYN_STORE_KV: mem
+    DYN_HEALTH_CHECK_ENABLED: "false"
+
+disaggregated:
+  serving_mode: disaggregated
+  prefill_replicas: 1
+  decode_replicas: 2

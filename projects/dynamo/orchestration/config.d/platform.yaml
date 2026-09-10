@@ -1,0 +1,54 @@
+cluster:
+  minimum_openshift_version: "4.17.0"
+  namespace:
+    name: forge-dynamo
+    prefix: dynamo
+    max_length: 63
+  gpu_node_label_selector: nvidia.com/gpu.present=true
+  nfd_gpu_detection_labels:
+    - feature.node.kubernetes.io/pci-10de.present
+    - feature.node.kubernetes.io/pci-0302_10de.present
+    - feature.node.kubernetes.io/pci-0300_10de.present
+
+operators:
+  nfd:
+    display_name: Node Feature Discovery
+    namespace: openshift-nfd
+    channel: stable
+    source: redhat-operators
+    bootstrap_crd: nodefeaturediscoveries.nfd.openshift.io
+  gpu-operator-certified:
+    display_name: NVIDIA GPU Operator
+    namespace: nvidia-gpu-operator
+    channel: stable
+    source: certified-operators
+    bootstrap_crd: clusterpolicies.nvidia.com
+
+dynamo:
+  helm:
+    chart_path: null
+    chart_repo: https://helm.ngc.nvidia.com/nvidia/dynamo
+    chart_name: dynamo-platform
+    chart_version: "1.2.1"
+    release_name: dynamo
+    namespace: dynamo-system
+    values_override:
+      global:
+        etcd:
+          install: true
+        nats:
+          install: true
+  operator:
+    wait_timeout_seconds: 300
+  required_crds:
+    - dynamographdeployments.nvidia.com
+    - dynamocomponentdeployments.nvidia.com
+
+smoke:
+  pod_name: dynamo-smoke
+  client_image: curlimages/curl:8.11.1
+  endpoint_path: /v1/completions
+  request_timeout_seconds: 120
+
+artifacts:
+  capture_namespace_events: true

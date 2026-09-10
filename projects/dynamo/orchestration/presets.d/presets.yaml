@@ -1,0 +1,60 @@
+__multiple: true
+
+smoke:
+  runtime:
+    model_name: Qwen/Qwen3-0.6B
+    deployment_profile: aggregated
+    benchmark_tool: guidellm
+    benchmark_key: short
+
+disagg-smoke:
+  runtime:
+    model_name: Qwen/Qwen3-0.6B
+    deployment_profile: disaggregated
+    benchmark_tool: guidellm
+    benchmark_key: short
+
+aiperf-mooncake:
+  runtime:
+    model_name: Qwen/Qwen3-32B
+    deployment_profile: aggregated
+    benchmark_tool: aiperf
+    benchmark_key: mooncake-trace-2k
+
+aiperf-mooncake-toolagent:
+  runtime:
+    model_name: Qwen/Qwen3-32B
+    deployment_profile: aggregated
+    benchmark_tool: aiperf
+    benchmark_key: mooncake-toolagent
+
+qwen32b-4r-mooncake:
+  runtime:
+    model_name: Qwen/Qwen3-32B-FP8
+    deployment_profile: aggregated-rr-4r-tp2
+    benchmark_tool: aiperf
+    benchmark_key: mooncake-trace-2k
+
+qwen32b-4r-mooncake-100:
+  runtime:
+    model_name: Qwen/Qwen3-32B-FP8
+    deployment_profile: aggregated-rr-4r-tp2
+    benchmark_tool: aiperf
+    benchmark_key: mooncake-trace-2k
+  workloads:
+    aiperf_benchmarks:
+      mooncake-trace-2k:
+        dataset_cap: 100
+
+full:
+  runtime:
+    model_name:
+      - meta-llama/Llama-3-70B
+      - Qwen/Qwen3-32B
+    deployment_profile:
+      - aggregated
+      - disaggregated
+    benchmark_tool: guidellm
+    benchmark_key:
+      - concurrent-1k-1k
+      - multi-turn

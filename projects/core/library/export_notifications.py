@@ -359,6 +359,9 @@ def _get_step_status_section(artifact_dir: Path | None, mlflow_run_url: str | No
             except Exception:
                 exit_status_emoji = "❓"
 
+        if step_dir.name.endswith("__export-artifacts"):
+            exit_status_emoji = "📤"
+
         # Count ERROR and WARNING messages in run.log
         log_counts = _count_log_messages(step_dir)
         log_summary = _format_log_summary(log_counts)
@@ -701,18 +704,18 @@ def _extract_postprocess_status_info(artifact_dir: Path) -> list[str]:
                     if isinstance(step_data, dict):
                         status = step_data.get("status", "unknown")
                         status_emoji = (
-                            "✅" if status == "success" else "❌" if status == "failed" else "⚪"
+                            "✔️" if status == "success" else "❌" if status == "failed" else "⚪"
                         )
                         step_statuses.append(f"{status_emoji} {step_name}")
 
             # Format overall line
             overall_emoji = "✅" if overall_success else "❌"
             if step_statuses:
-                steps_str = " " + " • ".join(step_statuses)
+                steps_str = " " + " | ".join(step_statuses)
             else:
                 steps_str = f" {final_status}"
 
-            postprocess_info_lines.append(f"**{dir_name}**: {overall_emoji}{steps_str}")
+            postprocess_info_lines.append(f"{overall_emoji} **{dir_name}**: {overall_emoji}{steps_str}")
 
         except Exception as e:
             postprocess_info_lines.append(f"**{postprocess_file.name}**: Error reading file - {e}")

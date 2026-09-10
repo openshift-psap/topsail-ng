@@ -14,6 +14,8 @@ from typing import Any
 
 import yaml
 
+from projects.caliper.engine.constants import METADATA_FILE
+from projects.caliper.engine.kpi.dataclasses import CaliperTestMetadata
 from projects.caliper.orchestration.censoring import censor_text
 from projects.caliper.orchestration.postprocess import POSTPROCESS_STATUS_FILENAME
 from projects.core.ci_entrypoint.prepare_ci import CI_METADATA_DIRNAME
@@ -41,8 +43,14 @@ class BackendResult:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "BackendResult":
         """Create BackendResult from raw dict."""
+        # Infer success from status if not explicitly provided
+        success = data.get("success")
+        if success is None:
+            status = data.get("status", "")
+            success = status == "success"
+
         return cls(
-            success=data.get("success", False),
+            success=success,
             run_id=data.get("run_id"),
             experiment_url=data.get("experiment_url"),
             run_url=data.get("run_url"),
@@ -172,14 +180,7 @@ class ExportStatus:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ExportStatus":
         """Create ExportStatus from raw dict, providing proper defaults."""
-        # Extract success from various possible sources
-        success = data.get("success")
-        if success is None:
-            # Try to determine success from final_status
-            final_status = data.get("final_status", "")
-            success = final_status in ("success", "completed")
-
-        # Convert nested structures to typed objects
+        # Convert nested structures to typed objects first
         caliper_export = None
         if data.get("caliper_artifacts_export"):
             caliper_export = CaliperArtifactsExport.from_dict(data["caliper_artifacts_export"])
@@ -192,9 +193,41 @@ class ExportStatus:
         if data.get("job_shutdown"):
             job_shutdown = JobShutdown.from_dict(data["job_shutdown"])
 
+        # Extract success from various possible sources
+        success = data.get("success")
+        final_status = data.get("final_status", "")
+
+        if success is None:
+            # Try to determine success from final_status first
+            if final_status in ("success", "completed"):
+                success = True
+            elif final_status in ("failed", "failure", "error"):
+                success = False
+            elif caliper_export and caliper_export.backends:
+                # Infer success from backend results if no explicit status
+                backend_successes = []
+                for backend_result in caliper_export.backends.values():
+                    if isinstance(backend_result, BackendResult):
+                        backend_successes.append(backend_result.success)
+                    elif isinstance(backend_result, dict):
+                        # Handle raw dict backends (shouldn't happen after conversion)
+                        backend_status = backend_result.get("status", "")
+                        backend_successes.append(backend_status == "success")
+
+                # Overall success if all backends succeeded
+                success = all(backend_successes) if backend_successes else False
+
+                # Set final_status based on inferred success if it wasn't set
+                if not final_status or final_status == "unknown":
+                    final_status = "success" if success else "failed"
+            else:
+                # Default to failed if we can't determine success
+                success = False
+                final_status = final_status or "unknown"
+
         return cls(
             success=success,
-            final_status=data.get("final_status", "unknown"),
+            final_status=final_status,
             censoring_occurred=data.get("censoring_occurred", False),
             duration=data.get("duration"),
             caliper_artifacts_export=caliper_export,
@@ -1095,7 +1128,7 @@ def _extract_postprocess_status_info(artifact_dir: Path) -> list[str]:
 
 
 def _process_step_details(step_dir: Path, mlflow_run_url: str | None = None) -> list[str]:
-    """Process test labels and postprocess status for a single step directory."""
+    """Process test labels, caliper metadata, and postprocess status for a single step directory."""
     step_details = []
 
     # Extract test labels for this specific step
@@ -1105,6 +1138,28 @@ def _process_step_details(step_dir: Path, mlflow_run_url: str | None = None) -> 
             step_details.extend(test_labels_info)
     except Exception as e:
         logger.warning(f"Failed to extract test labels for step {step_dir.name}: {e}")
+
+    # Extract caliper metadata for this specific step (before postprocess status)
+    try:
+        # Create file link function for this step
+        def get_file_link(file_path: Path) -> str:
+            if mlflow_run_url:
+                # Create MLflow artifact URL
+                return _create_mlflow_file_url_for_step(
+                    mlflow_run_url, step_dir.name, str(file_path)
+                )
+            else:
+                # Fallback: just return the file path as text
+                return str(file_path)
+
+        metadata_files = _search_caliper_metadata_files(step_dir)
+        metadata_info = _format_caliper_metadata_info_for_step(
+            metadata_files, get_file_link, step_dir.parent if step_dir.parent else step_dir
+        )
+        if metadata_info:
+            step_details.extend(metadata_info)
+    except Exception as e:
+        logger.warning(f"Failed to extract caliper metadata for step {step_dir.name}: {e}")
 
     # Extract postprocess status for this specific step
     try:
@@ -1376,3 +1431,172 @@ def _extract_duration_from_status(status: ExportStatus) -> str:
     if duration:
         return f" after {duration}"
     return ""
+
+
+def _search_caliper_metadata_files(step_dir: Path) -> list[Path]:
+    """Search for caliper metadata files in the step directory."""
+
+    if not step_dir.exists():
+        return []
+
+    metadata_files = []
+    # Search for METADATA_FILE (__caliper_test_metadata__.yaml) recursively
+    for metadata_file in step_dir.rglob(METADATA_FILE):
+        metadata_files.append(metadata_file)
+
+    return metadata_files
+
+
+def _format_caliper_metadata_info(metadata_files: list[Path], get_file_link: Any) -> str:
+    """Format caliper metadata information for display."""
+    if not metadata_files:
+        return ""
+
+    metadata_lines = []
+    metadata_lines.append("**Test Directories**")
+
+    for metadata_file in metadata_files:
+        try:
+            # Load and parse metadata
+            with open(metadata_file, encoding="utf-8") as f:
+                metadata_dict = yaml.safe_load(f)
+
+            metadata = CaliperTestMetadata.from_dict(metadata_dict)
+
+            # Get parent directory path
+            parent_dir = metadata_file.parent
+
+            # Extract information
+            labels = metadata.labels or {}
+            kpi_labels = metadata.kpi_labels or {}
+            timing = metadata.timing or {}
+
+            # Format path with link to metadata file
+            if get_file_link:
+                try:
+                    metadata_file_link = get_file_link(metadata_file)
+                    path_info = f"Path: [`{parent_dir}`]({metadata_file_link})"
+                except Exception as e:
+                    logger.warning(f"Failed to create link for metadata file {metadata_file}: {e}")
+                    path_info = f"Path: `{parent_dir}`"
+            else:
+                path_info = f"Path: `{parent_dir}`"
+            metadata_lines.append(f"* {path_info}")
+
+            # Format labels
+            if labels:
+                label_items = [f"`{k}={v}`" for k, v in labels.items()]
+                metadata_lines.append(f"* Labels: {', '.join(label_items)}")
+
+            # Format KPI labels
+            if kpi_labels:
+                kpi_label_items = [f"`{k}={v}`" for k, v in kpi_labels.items()]
+                metadata_lines.append(f"* KPI Labels: {', '.join(kpi_label_items)}")
+
+            # Look for completion information in timing
+            completion_success = timing.get("completion", {}).get("success")
+            completion_message = timing.get("completion", {}).get("message", "")
+
+            if completion_success is not None:
+                status_emoji = "✅" if completion_success else "❌"
+                message_part = f": `{completion_message}`" if completion_message else ""
+                metadata_lines.append(f"* Completion: {status_emoji}{message_part}")
+
+            # Format test and benchmark duration
+            test_duration = timing.get("test_duration")
+            benchmark_duration = timing.get("benchmark_duration")
+
+            if test_duration or benchmark_duration:
+                duration_parts = []
+                if test_duration:
+                    duration_parts.append(f"test: `{test_duration}`")
+                if benchmark_duration:
+                    duration_parts.append(f"benchmark: `{benchmark_duration}`")
+                metadata_lines.append(f"* Duration: {', '.join(duration_parts)}")
+
+        except Exception as e:
+            logger.warning(f"Failed to process caliper metadata file {metadata_file}: {e}")
+            metadata_lines.append(f"* `{metadata_file.parent}`: Error reading metadata - {e}")
+
+    return "\n".join(metadata_lines)
+
+
+def _format_caliper_metadata_info_for_step(
+    metadata_files: list[Path], get_file_link: Any, base_dir: Path
+) -> list[str]:
+    """Format caliper metadata information for integration within step details."""
+    if not metadata_files:
+        return []
+
+    metadata_lines = []
+
+    for metadata_file in metadata_files:
+        try:
+            # Load and parse metadata
+            with open(metadata_file, encoding="utf-8") as f:
+                metadata_dict = yaml.safe_load(f)
+
+            metadata = CaliperTestMetadata.from_dict(metadata_dict)
+
+            # Get relative path from base directory
+            try:
+                relative_path = metadata_file.parent.relative_to(base_dir)
+                display_path = str(relative_path) if str(relative_path) != "." else "root"
+            except ValueError:
+                # If relative_to fails, use the full path
+                display_path = str(metadata_file.parent)
+
+            # Extract information
+            labels = metadata.labels or {}
+            kpi_labels = metadata.kpi_labels or {}
+            timing = metadata.timing or {}
+
+            # Format path with link to metadata file
+            if get_file_link:
+                metadata_file_link = get_file_link(metadata_file)
+                path_info = f"* 📊 Test directory: [`{display_path}`]({metadata_file_link})"
+            else:
+                path_info = f"* 📊 Test directory: `{display_path}`"
+            metadata_lines.append(path_info)
+
+            # Format labels
+            if labels:
+                label_items = [f"`{k}={v}`" for k, v in labels.items()]
+                metadata_lines.append(f"    * {', '.join(label_items)}")
+
+            # Format KPI labels
+            if kpi_labels:
+                kpi_label_items = [f"`{k}={v}`" for k, v in kpi_labels.items()]
+                metadata_lines.append(f"  * KPI extra labels: {', '.join(kpi_label_items)}")
+
+            # Look for completion information in timing
+            completion_success = timing.get("completion", {}).get("success")
+            completion_message = timing.get("completion", {}).get("message", "")
+
+            if completion_success is not None:
+                status_emoji = "✅" if completion_success else "❌"
+                message_part = f": `{completion_message}`" if completion_message else ""
+                metadata_lines.append(f"    * Completion: {status_emoji}{message_part}")
+
+            # Format test and benchmark duration
+            test_duration = timing.get("test_duration")
+            benchmark_duration = timing.get("benchmark_duration")
+
+            if test_duration or benchmark_duration:
+                duration_parts = []
+                if test_duration:
+                    duration_parts.append(f"test: `{test_duration}`")
+                if benchmark_duration:
+                    duration_parts.append(f"benchmark: `{benchmark_duration}`")
+                metadata_lines.append(f"    * Duration: {', '.join(duration_parts)}")
+
+        except Exception as e:
+            logger.warning(f"Failed to process caliper metadata file {metadata_file}: {e}")
+            relative_path = (
+                metadata_file.parent.relative_to(base_dir) if base_dir else metadata_file.parent
+            )
+            metadata_lines.append(
+                f"* 📊 Test directory: `{relative_path}` - Error reading metadata: {e}"
+            )
+
+    return metadata_lines

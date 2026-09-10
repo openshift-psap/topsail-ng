@@ -8,6 +8,8 @@ from the public API with object-oriented step formatting.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from projects.caliper.public import PostprocessStatus, StepStatus
 
 
@@ -32,7 +34,7 @@ def format_postprocess_status_notification(
 
     # Check overall status (keep unchanged regardless of abort status)
     status_emoji = "✅" if status.is_success() else "❌"
-    base_directory = status.base_directory
+    base_directory = Path(status.base_directory)
     if base_directory.name == "status_files":
         base_directory = base_directory.parent
 
@@ -340,7 +342,6 @@ def _group_files_by_type(file_paths: list[str]) -> dict[str, list[str]]:
 
 def _get_file_type(file_path: str) -> str:
     """Determine file type from path."""
-    from pathlib import Path
 
     ext = Path(file_path).suffix.lower()
 
@@ -360,7 +361,6 @@ def _get_file_type(file_path: str) -> str:
 
 def _get_display_name(file_path: str) -> str:
     """Get display name for a file path."""
-    from pathlib import Path
 
     path = Path(file_path)
 

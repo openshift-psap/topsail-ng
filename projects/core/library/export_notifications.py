@@ -269,51 +269,78 @@ def _build_enhanced_notification(
         notification_parts.append(execution_engine_config)
 
     notification_success = True
+
+    # Extract artifact links (with error handling)
     try:
         artifact_links, mlflow_run_url = _extract_artifact_links(status)
-
-        test_status_section = _extract_test_status_section(status)
-        step_status = _get_step_status_section(artifact_dir, mlflow_run_url)
-        postprocess_status_links = _get_postprocess_status_links(artifact_dir, mlflow_run_url)
-
-        if test_status_section:
-            notification_parts.append("")
-            notification_parts.append("---")
-            notification_parts.extend(test_status_section)
-
-        if artifact_links:
-            notification_parts.append("")
-            notification_parts.append("---")
-            notification_parts.append("**Artifact Links**")
-            notification_parts.extend([f"* {link}" for link in artifact_links])
-        else:
-            notification_parts.append("**Artifact Links:** No direct links available")
-
-        if step_status:
-            notification_parts.append("")
-            notification_parts.append("---")
-            notification_parts.append("**Step details**")
-            for link in step_status:
-                notification_parts.append(link)
-
-        if postprocess_status_links:
-            notification_parts.append("")
-            notification_parts.append("---")
-            notification_parts.append("**Post-processing Status** ✅")
-            notification_parts.extend(postprocess_status_links)
-
-        # Add censoring report section if available
-        censoring_report_section = _get_censoring_report_section(artifact_dir)
-        if censoring_report_section:
-            notification_parts.append("")
-            notification_parts.append("---")
-            notification_parts.append("**Censoring Report**")
-            notification_parts.extend(censoring_report_section)
-
     except Exception as e:
-        logger.exception(f"Failed to build the extended notifications: {e}")
-        notification_parts.append("**Artifact Links:** Error extracting links")
+        logger.exception(f"Failed to extract artifact links: {e}")
+        artifact_links, mlflow_run_url = [], None
         notification_success = False
+
+    # Extract test status section (with error handling)
+    try:
+        test_status_section = _extract_test_status_section(status)
+    except Exception as e:
+        logger.exception(f"Failed to extract test status: {e}")
+        test_status_section = None
+
+    # Extract step status (with error handling)
+    try:
+        step_status = _get_step_status_section(artifact_dir, mlflow_run_url)
+    except Exception as e:
+        logger.exception(f"Failed to extract step status: {e}")
+        step_status = None
+
+    # Extract postprocess status (with error handling - don't let this break the notification)
+    try:
+        postprocess_status_links = _get_postprocess_status_links(artifact_dir, mlflow_run_url)
+    except Exception as e:
+        logger.exception(f"Failed to extract postprocess status: {e}")
+        postprocess_status_links = []
+
+    # Extract censoring report (with error handling)
+    try:
+        censoring_report_section = _get_censoring_report_section(artifact_dir)
+    except Exception as e:
+        logger.exception(f"Failed to extract censoring report: {e}")
+        censoring_report_section = None
+
+    # Build notification sections
+    if test_status_section:
+        notification_parts.append("")
+        notification_parts.append("---")
+        notification_parts.extend(test_status_section)
+
+    if artifact_links:
+        notification_parts.append("")
+        notification_parts.append("---")
+        notification_parts.append("**Artifact Links**")
+        notification_parts.extend([f"* {link}" for link in artifact_links])
+    else:
+        if notification_success:
+            notification_parts.append("**Artifact Links:** No direct links available")
+        else:
+            notification_parts.append("**Artifact Links:** Error extracting links")
+
+    if step_status:
+        notification_parts.append("")
+        notification_parts.append("---")
+        notification_parts.append("**Step details**")
+        for link in step_status:
+            notification_parts.append(link)
+
+    if postprocess_status_links:
+        notification_parts.append("")
+        notification_parts.append("---")
+        notification_parts.append("**Post-processing Status** ✅")
+        notification_parts.extend(postprocess_status_links)
+
+    if censoring_report_section:
+        notification_parts.append("")
+        notification_parts.append("---")
+        notification_parts.append("**Censoring Report**")
+        notification_parts.extend(censoring_report_section)
 
     notification_parts.append("")
     notification_parts.append("---")

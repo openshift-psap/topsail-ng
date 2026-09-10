@@ -1139,19 +1139,17 @@ def _process_step_details(step_dir: Path, mlflow_run_url: str | None = None) -> 
     except Exception as e:
         logger.warning(f"Failed to extract test labels for step {step_dir.name}: {e}")
 
+    # Create file link function for this step (shared by multiple extractors)
+    def get_file_link(file_path: Path) -> str:
+        if mlflow_run_url:
+            # Create MLflow artifact URL
+            return _create_mlflow_file_url_for_step(mlflow_run_url, step_dir.name, str(file_path))
+        else:
+            # Fallback: just return the file path as text
+            return str(file_path)
+
     # Extract caliper metadata for this specific step (before postprocess status)
     try:
-        # Create file link function for this step
-        def get_file_link(file_path: Path) -> str:
-            if mlflow_run_url:
-                # Create MLflow artifact URL
-                return _create_mlflow_file_url_for_step(
-                    mlflow_run_url, step_dir.name, str(file_path)
-                )
-            else:
-                # Fallback: just return the file path as text
-                return str(file_path)
-
         metadata_files = _search_caliper_metadata_files(step_dir)
         metadata_info = _format_caliper_metadata_info_for_step(
             metadata_files, get_file_link, step_dir.parent if step_dir.parent else step_dir
@@ -1160,6 +1158,14 @@ def _process_step_details(step_dir: Path, mlflow_run_url: str | None = None) -> 
             step_details.extend(metadata_info)
     except Exception as e:
         logger.warning(f"Failed to extract caliper metadata for step {step_dir.name}: {e}")
+
+    # Extract censoring report for this specific step (before postprocess status)
+    try:
+        censoring_info = _format_censoring_report_info_for_step(step_dir, get_file_link)
+        if censoring_info:
+            step_details.extend(censoring_info)
+    except Exception as e:
+        logger.warning(f"Failed to extract censoring report for step {step_dir.name}: {e}")
 
     # Extract postprocess status for this specific step
     try:
@@ -1519,6 +1525,70 @@ def _format_caliper_metadata_info(metadata_files: list[Path], get_file_link: Any
             metadata_lines.append(f"* `{metadata_file.parent}`: Error reading metadata - {e}")
 
     return "\n".join(metadata_lines)
+
+
+def _format_censoring_report_info_for_step(step_dir: Path, get_file_link: Any) -> list[str]:
+    """Format censoring report information for integration within step details."""
+    censoring_report_path = step_dir / "censoring_report.yaml"
+
+    if not censoring_report_path.exists():
+        return []
+
+    try:
+        with open(censoring_report_path, encoding="utf-8") as f:
+            report_data = yaml.safe_load(f)
+
+        if not report_data:
+            return []
+
+        censoring_lines = []
+
+        # Get censoring statistics
+        total_files = report_data.get("total_files", 0)
+        clean_files = report_data.get("clean_files", 0)
+        safe_censored_files = report_data.get("safe_censored_files", 0)
+        censored_files = report_data.get("censored_files", 0)  # Unexpected censoring
+
+        censoring_lines.append("* 🔒 Censoring Report")
+        # Create link to censoring report file
+        if get_file_link:
+            try:
+                report_link = get_file_link(censoring_report_path)
+                first_line = "[📊 {total_files} files scanned]({report_link})"
+            except Exception as e:
+                logger.warning(
+                    f"Failed to create link for censoring report {censoring_report_path}: {e}"
+                )
+                first_line = f"📊 {total_files} files scanned"
+        else:
+            first_line = f"📊 {total_files} files scanned"
+
+        censoring_lines.append(f"  * {first_line}")
+
+        # Show breakdown of file types
+        if clean_files > 0:
+            censoring_lines.append(f"  * ✅ Clean files: {clean_files}")
+
+        if safe_censored_files > 0:
+            censoring_lines.append(f"  * 🔐 Safe replacements: {safe_censored_files}")
+
+        if censored_files > 0:
+            censoring_lines.append(f"  * ⚠️ Unexpected censoring: {censored_files}")
+
+            # Show details for unexpected censoring if available
+            censored_by_reason = report_data.get("censored_by_reason", {})
+            if censored_by_reason:
+                for reason, files in censored_by_reason.items():
+                    file_count = len(files)
+                    # Truncate reason if too long
+                    display_reason = reason[:50] + "..." if len(reason) > 50 else reason
+                    censoring_lines.append(f"    * {display_reason}: {file_count} file(s)")
+
+        return censoring_lines
+
+    except Exception as e:
+        logger.warning(f"Failed to process censoring report {censoring_report_path}: {e}")
+        return [f"* 🔒 Censoring Report: Error reading report - `{e}`"]
 
 
 def _format_caliper_metadata_info_for_step(

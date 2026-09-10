@@ -450,7 +450,7 @@ def _build_enhanced_notification(
     logger.info(f"DEBUG: Final status emoji: {status_emoji}")
 
     base_status = f"{status_emoji} **Execution of `{fjob_project}` {fjob_args_str}** {status_emoji}"
-    notification_parts = [base_status, ]
+    notification_parts = [base_status]
 
     # Add job abort message right below overall status if applicable
     shutdown_status = status.job_shutdown
@@ -608,22 +608,32 @@ def _get_censoring_report_section(artifact_dir: Path) -> list[str] | None:
 
 
 def _get_execution_engine_config() -> str | None:
-    """Get execution engine configuration for notification."""
+    """Read and format execution engine configuration."""
     try:
-        cluster_config = config.project.get_config("cluster", None, warn=False)
-        if not cluster_config:
-            return None
+        metadata_dir = ci_lib.get_ci_metadata_dir()
+        fournos_fjob_path = metadata_dir / "fournos_fjob.yaml"
+        if not fournos_fjob_path.exists():
+            return f"* FournosJob not found at `{fournos_fjob_path}`"
 
-        config_parts = []
-        for key, value in cluster_config.items():
-            if value:
-                config_parts.append(f"`{key}`: {value}")
+        with open(fournos_fjob_path, encoding="utf-8") as f:
+            fjob_data = yaml.safe_load(f)
 
-        if config_parts:
-            return "* " + "  \n* ".join(config_parts)
-    except Exception:
-        pass
-    return None
+        execution_engine = fjob_data.get("spec", {}).get("executionEngine", {})
+
+        config = {}
+        config["executionEngine"] = execution_engine
+        config["author"] = fjob_data.get("spec", {}).get("author")
+
+        if cluster := fjob_data.get("spec", {}).get("cluster"):
+            config["cluster"] = cluster
+
+        if pipeline := fjob_data.get("spec", {}).get("pipeline"):
+            config["pipeline"] = pipeline
+
+        config_yaml = yaml.dump(config, default_flow_style=False, sort_keys=True)
+        return f"```yaml\n{config_yaml.strip()}\n```"
+    except Exception as e:
+        return f"* Failed to read fournos job config: `{e}`"
 
 
 def _extract_test_status_section(status: ExportStatus) -> list[str] | None:

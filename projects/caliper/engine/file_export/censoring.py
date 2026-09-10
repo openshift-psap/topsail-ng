@@ -55,6 +55,7 @@ class CensoringResult:
     censored: bool
     reason: str
     sanitized: bool = False  # True if content was sanitized in-place
+    safely_redacted: bool = False  # True if redacted using censor_text (expected)
 
     def __str__(self):
         if self.sanitized:
@@ -158,12 +159,16 @@ class ArtifactCensor:
                     file_path.write_text(censored_content, encoding="utf-8")
 
                 return CensoringResult(
-                    file_path, True, f"sensitive filename pattern: {file_path.name}", sanitized=True
+                    file_path,
+                    True,
+                    f"sensitive filename pattern: {file_path.name}",
+                    sanitized=True,
+                    safely_redacted=False,
                 )
 
             # Skip non-text files to avoid reading binary content
             if not self._is_text_file(file_path):
-                return CensoringResult(file_path, False, "non-text file")
+                return CensoringResult(file_path, False, "non-text file", safely_redacted=False)
 
             content = file_path.read_text(encoding="utf-8", errors="ignore")
             sanitized = False
@@ -201,6 +206,10 @@ class ArtifactCensor:
 
                 sanitized = True
 
+            # Track whether only safe censor_text replacements were made
+            has_safe_replacements = False
+            has_unsafe_replacements = False
+
             # Always check for vault secrets, independent of keyword pattern detection
             for secret in self.vault_secrets:
                 if secret and secret.strip() and secret.strip() in content:
@@ -209,12 +218,24 @@ class ArtifactCensor:
                     content = content.replace(secret.strip(), replacement)
                     sanitized = True
 
-                    # Only add to reasons if not using censor_text (unexpected vault content)
+                    # Track type of replacement and add appropriate reason
                     if secret.strip() not in self.censor_text_mapping:
+                        # Unexpected vault content - add to reasons for reporting
+                        has_unsafe_replacements = True
                         vault_identifier = self.secret_mapping.get(secret.strip(), "unknown vault")
                         reasons.append(f"contains vault secret: {vault_identifier}")
+                    else:
+                        # Expected vault content with censor_text - add specific reason
+                        has_safe_replacements = True
+                        vault_identifier = self.secret_mapping.get(secret.strip(), "unknown vault")
+                        reasons.append(f"replaced with censor_text from {vault_identifier}")
 
             if sanitized:
+                # Determine if this was safely redacted (only censor_text, no keywords/unexpected vault)
+                safely_redacted = (
+                    has_safe_replacements and not has_unsafe_replacements and not keyword_detected
+                )
+
                 # Write sanitized content back to original file (skip if dry run)
                 if not self.dry_run:
                     try:
@@ -230,13 +251,17 @@ class ArtifactCensor:
                             raise
 
                 reason = reasons[0] if reasons else "sensitive content detected"
-                return CensoringResult(file_path, True, reason, sanitized=True)
+                return CensoringResult(
+                    file_path, True, reason, sanitized=True, safely_redacted=safely_redacted
+                )
 
-            return CensoringResult(file_path, False, "content check passed")
+            return CensoringResult(file_path, False, "content check passed", safely_redacted=False)
 
         except Exception as e:
             logger.warning(f"Error sanitizing file {file_path}: {e}")
-            return CensoringResult(file_path, True, f"sanitization failed: {e}")
+            return CensoringResult(
+                file_path, True, f"sanitization failed: {e}", safely_redacted=False
+            )
 
     def censor_files(self, file_paths: list[Path]) -> tuple[list[Path], list[CensoringResult]]:
         """

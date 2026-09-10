@@ -455,7 +455,7 @@ class TestApplyCensoringToArtifacts:
 
         content = f.read_text()
         assert "my-vault-secret-value" not in content
-        assert "*******" in content
+        assert "[REDACTED-VAULT]" in content
 
     def test_summary_counts_are_correct(self, tmp_path):
         # Create files of each type

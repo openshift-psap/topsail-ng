@@ -225,7 +225,7 @@ def orchestration_apply_censoring(
         disable_censoring: Whether to skip censoring
 
     Returns:
-        True if any files were censored (sanitized or excluded), False otherwise
+        True if unexpected censoring issues occurred (excluding safe censor_text), False otherwise
     """
     if disable_censoring:
         if export_cfg.verbose:
@@ -266,34 +266,65 @@ def orchestration_apply_censoring(
 
     _generate_censoring_report(censoring_results, from_path)
 
-    # Abort export if any files were excluded (fail closed)
+    # Generate notification for excluded files but allow export to proceed
     if excluded_files:
-        # Create notification about censoring activity blocking export
-        _create_censoring_notification(censoring_results, from_path, export_blocked=True)
-
-        excluded_file_names = [str(r.file_path.relative_to(from_path)) for r in excluded_files]
-        logger.error(
-            f"Export aborted: {len(excluded_files)} files contain sensitive content that could not be sanitized: {excluded_file_names[:5]}{'...' if len(excluded_file_names) > 5 else ''}"
-        )
-        raise RuntimeError(
-            f"Export blocked due to {len(excluded_files)} unsanitizable sensitive files"
-        )
-
-    # Generate censoring report and notification if any files were processed
-    if sanitized_files:
-        # Create notification about censoring activity (export proceeds with sanitized files)
+        # Create notification about censoring activity
         _create_censoring_notification(censoring_results, from_path, export_blocked=False)
 
+        excluded_file_names = [str(r.file_path.relative_to(from_path)) for r in excluded_files]
+        logger.warning(
+            f"Export proceeding despite {len(excluded_files)} files with sensitive content that could not be sanitized: {excluded_file_names[:5]}{'...' if len(excluded_file_names) > 5 else ''}"
+        )
+        # Note: Export continues despite excluded files - notifications will alert about issues
+
+    # Generate censoring report and notification if any files were processed
+    if sanitized_files or excluded_files:
+        # Only create notification for unexpected censoring, not safe censor_text replacements
+        # (excluded files already got their notification above)
+        if sanitized_files:
+            unexpected_sanitized_files = [
+                r for r in censoring_results if r.sanitized and not r.safely_redacted
+            ]
+
+            if unexpected_sanitized_files:
+                # Create notification about unexpected censoring activity
+                _create_censoring_notification(
+                    unexpected_sanitized_files, from_path, export_blocked=False
+                )
+    else:
         if export_cfg.verbose:
-            logger.info(
-                f"Export proceeding with {len(sanitized_files)} files sanitized for sensitive content"
+            logger.info("No files required censoring")
+        return False  # No censoring occurred
+
+    if export_cfg.verbose and (sanitized_files or excluded_files):
+        # Calculate counts for verbose logging
+        unexpected_sanitized_count = len(
+            [r for r in censoring_results if r.sanitized and not r.safely_redacted]
+        )
+        safe_files = len(sanitized_files) - unexpected_sanitized_count
+
+        log_parts = []
+        if unexpected_sanitized_count > 0:
+            log_parts.append(
+                f"{unexpected_sanitized_count} files with unexpected sensitive content sanitized"
             )
-        return True  # Censoring occurred
+        if safe_files > 0:
+            log_parts.append(f"{safe_files} files with expected vault content replaced")
+        if excluded_files:
+            log_parts.append(f"{len(excluded_files)} files excluded due to sensitive filenames")
 
-    elif export_cfg.verbose:
-        logger.info("No files required censoring")
+        if log_parts:
+            logger.info(f"Export proceeding: {', '.join(log_parts)}")
+        else:
+            logger.info("Export proceeding")
 
-    return False  # No censoring occurred
+    # Only return True (censoring occurred) if there were unexpected issues
+    # Safe censor_text replacements should not trigger exit code 1
+    has_unexpected_issues = (
+        len([r for r in censoring_results if r.sanitized and not r.safely_redacted]) > 0
+        or len(excluded_files) > 0
+    )
+    return has_unexpected_issues
 
 
 def _generate_censoring_report(censoring_results, from_path: Path) -> None:
@@ -301,29 +332,51 @@ def _generate_censoring_report(censoring_results, from_path: Path) -> None:
     try:
         from datetime import datetime
 
-        # Group censored files by reason
-        censored_by_reason = {}
+        # Separate safe vs unexpected censoring
+        safe_censoring_by_reason = {}
+        unexpected_censoring_by_reason = {}
+
         for r in censoring_results:
             if r.censored:
                 reason = r.reason
-                if reason not in censored_by_reason:
-                    censored_by_reason[reason] = []
-
                 file_path = (
                     str(r.file_path.relative_to(from_path))
                     if r.file_path.is_relative_to(from_path)
                     else str(r.file_path)
                 )
-                censored_by_reason[reason].append(file_path)
+
+                # Use the safely_redacted flag to categorize
+                if r.safely_redacted:
+                    # Safe censoring - expected vault content with censor_text
+                    if reason not in safe_censoring_by_reason:
+                        safe_censoring_by_reason[reason] = []
+                    safe_censoring_by_reason[reason].append(file_path)
+                else:
+                    # Unexpected censoring - unexpected sensitive content
+                    if reason not in unexpected_censoring_by_reason:
+                        unexpected_censoring_by_reason[reason] = []
+                    unexpected_censoring_by_reason[reason].append(file_path)
+
+        # Count different types of censoring
+        safe_censored_files = sum(len(files) for files in safe_censoring_by_reason.values())
+        unexpected_censored_files = sum(
+            len(files) for files in unexpected_censoring_by_reason.values()
+        )
+        total_censored_files = safe_censored_files + unexpected_censored_files
 
         # Create report data
         report_data = {
             "timestamp": datetime.now().isoformat(),
             "source_directory": str(from_path),
             "total_files": len(censoring_results),
-            "censored_files": len([r for r in censoring_results if r.censored]),
             "clean_files": len([r for r in censoring_results if not r.censored]),
-            "censored_by_reason": censored_by_reason,
+            "censored_files": total_censored_files,
+            "safe_censored_files": safe_censored_files,
+            "unexpected_censored_files": unexpected_censored_files,
+            "safe_censoring_by_reason": safe_censoring_by_reason,
+            "unexpected_censoring_by_reason": unexpected_censoring_by_reason,
+            # Keep old format for compatibility
+            "censored_by_reason": {**safe_censoring_by_reason, **unexpected_censoring_by_reason},
         }
 
         # Write report to ARTIFACT_DIR
@@ -347,12 +400,13 @@ def _create_censoring_notification(
 ) -> None:
     """Create a notification file about censoring activity."""
     try:
-        # Separate results
+        # censoring_results now contains only unexpected/problematic censoring results
+        # (safe censor_text replacements are excluded)
         sanitized_files = [r.file_path for r in censoring_results if r.sanitized]
         excluded_files = [r.file_path for r in censoring_results if r.censored and not r.sanitized]
 
         if not sanitized_files and not excluded_files:
-            return  # No censoring occurred
+            return  # No unexpected censoring occurred
 
         # Prepare file lists
         def format_file_list(files, limit=10):
@@ -393,17 +447,12 @@ For details, see: $ARTIFACT_DIR/censoring_report.yaml"""
             ]
 
             if sanitized_files:
-                # Analyze what types of censoring occurred by examining reasons
+                # Analyze what types of censoring occurred using the safely_redacted flag
                 sanitized_results = [r for r in censoring_results if r.sanitized]
-                reasons = [r.reason for r in sanitized_results]
 
                 # Categorize types of censoring that occurred
-                has_sanitized_replacements = any(
-                    "sensitive content detected" == reason for reason in reasons
-                )
-                has_placeholder_replacements = any(
-                    "sensitive content detected" != reason for reason in reasons
-                )
+                has_sanitized_replacements = any(r.safely_redacted for r in sanitized_results)
+                has_placeholder_replacements = any(not r.safely_redacted for r in sanitized_results)
 
                 message_parts.append(
                     f"""

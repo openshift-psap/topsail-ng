@@ -494,26 +494,26 @@ def _update_artifacts(
     # Collect files to upload
     files_to_upload = []
 
-    # Check for run.log
-    log_file = artifact_dir_path / "run.log"
-    if log_file.is_file():
-        files_to_upload.append(log_file)
-
-    # Check for notification file
-    notif_file = artifact_dir_path / "NOTIFICATION-github.md"
-    if notif_file.is_file():
-        files_to_upload.append(notif_file)
+    for fpath in [
+        artifact_dir_path / "run.log",
+        artifact_dir_path / "NOTIFICATION-github.md",
+        artifact_dir_path / "000__ci_metadata" / "fournos_fjob.yaml",
+    ]:
+        if fpath.is_file():
+            files_to_upload.append(fpath)
 
     # Upload files if any exist
-    if files_to_upload:
-        from projects.caliper.engine.file_export.mlflow_backend import update_artifacts
+    if not files_to_upload:
+        return
 
-        update_artifacts(
-            run_id=run_id,
-            files=dict.fromkeys(files_to_upload, artifact_path),
-            tracking_uri=tracking_uri,
-            connection=connection,
-        )
+    from projects.caliper.engine.file_export.mlflow_backend import update_artifacts
+
+    update_artifacts(
+        run_id=run_id,
+        files=dict.fromkeys(files_to_upload, artifact_path),
+        tracking_uri=tracking_uri,
+        connection=connection,
+    )
 
 
 def caliper_export_list_vaults() -> list[str]:

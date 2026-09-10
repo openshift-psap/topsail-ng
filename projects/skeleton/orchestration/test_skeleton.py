@@ -97,15 +97,15 @@ def do_test():
     logger.info("=== Skeleton Project Test Phase ===")
 
     if config.project.get_config("skeleton.deep_testing"):
-        logger.warning("Running the (fake) deep testing ...")
+        logger.info("Running the (fake) deep testing ...")
     else:
-        logger.warning("Running the (fake) light testing ...")
+        logger.info("Running the (fake) light testing ...")
 
     client_id = vault.get_vault_content_path("psap-forge-notifications", "topsail-bot.clientid")
     if not client_id:
-        logger.warning("`client_id` secret not available.")
+        logger.error("`client_id` secret not available.")
     else:
-        logger.warning(f"`client_id` secret available. Size: {client_id.stat().st_size}b")
+        logger.info(f"`client_id` secret available. Size: {client_id.stat().st_size}b")
         del client_id
 
     skeleton_config = config.project.get_config("skeleton", print=False)
@@ -125,7 +125,7 @@ def do_test():
         seed_skeleton_caliper_artifacts()
 
     if not config.project.get_config("skeleton.collect_cluster_info"):
-        logger.warning("⚠️ Cluster information gathering not enabled. Returning early.")
+        logger.info("⚠️ Cluster information gathering not enabled. Returning early.")
         return 0
 
     # Demonstrate calling a toolbox from orchestration

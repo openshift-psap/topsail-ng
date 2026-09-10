@@ -7,8 +7,10 @@ content:
     description: |
       Private key to send github notifications
   topsail-bot.clientid:
+    sensible: false
     description: |
-      Token to identify the TOPSAIL-bot client
+      Public ID of the TOPSAIL-bot client
+      
   topsail-bot.slack-token:
     description: |
       Token to send slack notification from the TOPSAIL-bot

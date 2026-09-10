@@ -10,6 +10,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from projects.caliper.orchestration.postprocess import POSTPROCESS_STATUS_FILENAME
+
 logger = logging.getLogger(__name__)
 
 
@@ -52,7 +54,7 @@ def generate_caliper_reports_index(
     html_files = []
     data_files = []
 
-    ignored_files = {index_filename, "postprocess_status.yaml"}
+    ignored_files = {index_filename, POSTPROCESS_STATUS_FILENAME}
 
     for html_file in sorted(output_dir.glob("*.html")):
         if html_file.name not in ignored_files:

@@ -13,6 +13,7 @@ from projects.caliper.engine.ai_eval import run_ai_eval_export
 from projects.caliper.engine.constants import METADATA_FILE
 from projects.caliper.engine.file_export.artifacts_export_run import run_artifacts_export
 from projects.caliper.engine.file_export.artifacts_import_run import run_artifacts_import
+from projects.caliper.engine.file_export.censoring import apply_censoring_to_artifacts
 from projects.caliper.engine.file_export.mlflow_config import load_mlflow_config_yaml
 from projects.caliper.engine.kpi.generate import run_kpi_generate
 from projects.caliper.engine.kpi.import_export import (
@@ -1322,15 +1323,17 @@ def artifacts_export(
     }
 
     try:
-        run_artifacts_export(
+        exit_code = run_artifacts_export(
             from_path=from_path,
             backend=list(backend) if backend else ["mlflow"],
-            mlflow_tracking_uri=mlflow_tracking_uri,
-            mlflow_experiment=mlflow_experiment,
-            mlflow_run_id=mlflow_run_id,
-            mlflow_run_name=mlflow_run_name,
-            mlflow_insecure_tls=mlflow_insecure_tls,
-            mlflow_secrets_path=mlflow_secrets_path,
+            mlflow_tracking_uri=final_config["tracking_uri"],
+            mlflow_experiment=final_config["experiment"],
+            mlflow_run_id=final_config["run_id"],
+            mlflow_run_name=final_config["run_name"],
+            mlflow_insecure_tls=final_config["insecure_tls"],
+            mlflow_secrets_path=Path(final_config["secrets_path"])
+            if final_config["secrets_path"]
+            else None,
             mlflow_config_data=final_config,
             dry_run=dry_run,
             verbose=verbose,
@@ -1345,6 +1348,215 @@ def artifacts_export(
         click.echo("Full traceback:", err=True)
         click.echo(full_traceback, err=True)
         sys.exit(3)
+
+    # Check return value outside try block to avoid intercepting SystemExit
+    if exit_code != 0:
+        sys.exit(exit_code)
+
+
+@click.command("censor")
+@click.option(
+    "--from",
+    "from_path",
+    type=click.Path(path_type=Path, exists=True),
+    required=True,
+    help="Source directory containing artifacts to censor.",
+)
+@click.option(
+    "--output",
+    "output_path",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Output directory for cleaned artifacts. If not specified, censoring is done in-place.",
+)
+@click.option("--dry-run", is_flag=True, help="Show what would be censored without making changes.")
+@click.option("-v", "--verbose", is_flag=True, help="Show detailed censoring information.")
+@click.option(
+    "--report",
+    "report_path",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Write censoring report to this file.",
+)
+def artifacts_censor(
+    from_path: Path,
+    output_path: Path | None,
+    dry_run: bool,
+    verbose: bool,
+    report_path: Path | None,
+) -> None:
+    """Censor sensitive artifacts by removing files containing secrets or sensitive patterns."""
+    import json
+    import shutil
+    from datetime import datetime
+
+    if not from_path.exists():
+        click.echo(f"Error: Source path does not exist: {from_path}", err=True)
+        sys.exit(1)
+
+    if not from_path.is_dir():
+        click.echo(f"Error: Source path is not a directory: {from_path}", err=True)
+        sys.exit(1)
+
+    # Collect all artifact files
+    all_artifact_paths = [p for p in from_path.rglob("*") if p.is_file()]
+
+    if not all_artifact_paths:
+        click.echo(f"No artifacts found in {from_path}")
+        return
+
+    click.echo(f"Scanning {len(all_artifact_paths)} artifacts in {from_path}")
+
+    # Determine which files to censor based on output_path
+    if output_path:
+        # Copy source tree to output directory first, then censor the copy
+        if not dry_run:
+            try:
+                if output_path.exists():
+                    import shutil
+
+                    shutil.rmtree(output_path)
+                shutil.copytree(from_path, output_path)
+                click.echo(f"Copied source tree to {output_path}")
+            except Exception as e:
+                click.echo(f"Error copying source tree: {e}", err=True)
+                sys.exit(1)
+        else:
+            click.echo(f"Dry run: Would copy source tree to {output_path}")
+
+        # Get corresponding files in the output directory for censoring
+        artifact_paths_to_censor = [
+            output_path / p.relative_to(from_path) for p in all_artifact_paths
+        ]
+        censoring_source_path = output_path
+    else:
+        # Use original files for in-place censoring
+        artifact_paths_to_censor = all_artifact_paths
+        censoring_source_path = from_path
+
+    # Apply censoring to the target files (copy or original)
+    filtered_paths, censoring_results = apply_censoring_to_artifacts(
+        artifact_paths_to_censor, censoring_enabled=True, verbose=verbose, dry_run=dry_run
+    )
+
+    # Separate results: excluded (fully censored), sanitized (redacted in-place), and clean
+    excluded_files = [r.file_path for r in censoring_results if r.censored and not r.sanitized]
+    sanitized_files = [r.file_path for r in censoring_results if r.sanitized]
+    clean_files = [r.file_path for r in censoring_results if not r.censored]
+
+    # Print summary
+    click.echo("\nCensoring Summary:")
+    click.echo(f"  Total files scanned: {len(all_artifact_paths)}")
+    click.echo(f"  Clean files: {len(clean_files)}")
+    click.echo(f"  Sanitized files: {len(sanitized_files)}")
+    click.echo(f"  Excluded files: {len(excluded_files)}")
+
+    if (excluded_files or sanitized_files) and verbose:
+        if sanitized_files:
+            click.echo("\nSanitized files (redacted in-place, kept):")
+            for result in censoring_results:
+                if result.sanitized:
+                    rel_path = result.file_path.relative_to(censoring_source_path)
+                    click.echo(f"  - {rel_path}: {result.reason}")
+        if excluded_files:
+            click.echo("\nExcluded files (to be removed):")
+            for result in censoring_results:
+                if result.censored and not result.sanitized:
+                    rel_path = result.file_path.relative_to(censoring_source_path)
+                    click.echo(f"  - {rel_path}: {result.reason}")
+
+    # Generate report if requested
+    if report_path:
+        report_data = {
+            "timestamp": datetime.now().isoformat(),
+            "source_directory": str(from_path),
+            "output_directory": str(output_path) if output_path else None,
+            "total_files": len(all_artifact_paths),
+            "clean_files": len(clean_files),
+            "sanitized_files": len(sanitized_files),
+            "excluded_files": len(excluded_files),
+            "sanitized_details": [
+                {
+                    "file": str(r.file_path.relative_to(censoring_source_path)),
+                    "reason": r.reason,
+                }
+                for r in censoring_results
+                if r.sanitized
+            ],
+            "excluded_details": [
+                {
+                    "file": str(r.file_path.relative_to(censoring_source_path)),
+                    "reason": r.reason,
+                }
+                for r in censoring_results
+                if r.censored and not r.sanitized
+            ],
+        }
+
+        if dry_run:
+            click.echo(f"\nDry run: Would write report to {report_path}")
+        else:
+            try:
+                report_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(report_path, "w") as f:
+                    json.dump(report_data, f, indent=2)
+                click.echo(
+                    f"\nCensoring report written to {report_path}\n{report_path.read_text()}"
+                )
+            except Exception as e:
+                click.echo(f"Error writing report: {e}", err=True)
+
+    # Handle output
+    if dry_run:
+        click.echo("\nDry run: No files were modified")
+        if output_path:
+            kept_count = len(clean_files) + len(sanitized_files)
+            click.echo(
+                f"Would copy source tree to {output_path} and remove {len(excluded_files)} excluded files"
+            )
+        else:
+            click.echo(f"Would remove {len(excluded_files)} excluded files from {from_path}")
+
+    elif output_path:
+        # Files have already been copied and censored in the output directory
+        # Now remove excluded files from the output directory
+        if excluded_files:
+            try:
+                for excluded_file in excluded_files:
+                    excluded_file.unlink()
+                    if verbose:
+                        rel_path = excluded_file.relative_to(output_path)
+                        click.echo(f"  Removed from output: {rel_path}")
+
+                kept_count = len(clean_files) + len(sanitized_files)
+                click.echo(
+                    f"\nProcessed artifacts in {output_path}: {kept_count} kept, {len(excluded_files)} removed"
+                )
+
+            except Exception as e:
+                click.echo(f"Error removing excluded files from output: {e}", err=True)
+                sys.exit(1)
+        else:
+            kept_count = len(clean_files) + len(sanitized_files)
+            click.echo(f"\nProcessed artifacts in {output_path}: {kept_count} files, all clean!")
+
+    else:
+        # Remove only excluded files in-place (sanitized files are already redacted and kept)
+        if excluded_files:
+            try:
+                for excluded_file in excluded_files:
+                    excluded_file.unlink()
+                    if verbose:
+                        rel_path = excluded_file.relative_to(from_path)
+                        click.echo(f"  Removed: {rel_path}")
+
+                click.echo(f"\nRemoved {len(excluded_files)} excluded files from {from_path}")
+
+            except Exception as e:
+                click.echo(f"Error removing files: {e}", err=True)
+                sys.exit(1)
+        else:
+            click.echo("\nNo files to remove - all artifacts are clean!")
 
 
 @click.command("import")

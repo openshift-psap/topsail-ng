@@ -12,6 +12,7 @@ import click
 from projects.caliper.cli.commands import (
     ai_eval_export,
     analyse_kpis_cmd,
+    artifacts_censor,
     artifacts_export,
     artifacts_import,
     html_export_cmd,
@@ -221,6 +222,7 @@ kpi_group.add_command(html_export_cmd)
 kpi_group.add_command(s3_export_cmd)
 
 # Register artifacts commands
+artifacts_group.add_command(artifacts_censor)
 artifacts_group.add_command(artifacts_export)
 artifacts_group.add_command(artifacts_import)
 

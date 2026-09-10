@@ -335,7 +335,7 @@ def _get_step_status_section(artifact_dir: Path | None, mlflow_run_url: str | No
 
     step_status = []
     for step_dir in sorted(artifact_dir.glob("*")):
-        if not step_dir.is_dir() or step_dir.name.startswith("."):
+        if not step_dir.is_dir() or step_dir.name.startswith(".") or step_dir.name == "lost+found":
             continue
 
         step_name = step_dir.name
